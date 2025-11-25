@@ -239,6 +239,75 @@ container = "ubuntu:22.04"
 validate-command = "/validators/validate-bash-exec.sh"
 ```
 
+## Custom Docker Images
+
+You can use locally-built or private registry images without pushing to a public registry.
+
+### Local Images
+
+Build once, reference by name:
+
+```bash
+# Build your custom validator image
+docker build -t my-validator:latest validators/myvalidator/
+```
+
+```toml
+[preprocessor.validator.validators.custom]
+container = "my-validator:latest"  # Local image, no registry needed
+validate-command = "/validate.sh"
+```
+
+testcontainers-rs uses local images if they exist, no pulling required.
+
+### Private Registry
+
+For team sharing:
+
+```bash
+docker push registry.mycompany.com/my-validator:latest
+```
+
+```toml
+[preprocessor.validator.validators.custom]
+container = "registry.mycompany.com/my-validator:latest"
+validate-command = "/validate.sh"
+```
+
+Docker uses your logged-in credentials (`docker login`).
+
+### Example: pyproject.toml Validator
+
+`validators/pyproject/Dockerfile`:
+```dockerfile
+FROM python:3.12-slim-bookworm
+RUN pip install --no-cache-dir 'validate-pyproject[all]' jq
+COPY validate.sh /validate.sh
+RUN chmod +x /validate.sh
+```
+
+`validators/pyproject/validate.sh`:
+```bash
+#!/bin/bash
+set -e
+INPUT=$(cat)
+CONTENT=$(echo "$INPUT" | jq -r '.content')
+TMPFILE=$(mktemp --suffix=.toml)
+echo "$CONTENT" > "$TMPFILE"
+validate-pyproject "$TMPFILE"
+```
+
+Build and use:
+```bash
+docker build -t pyproject-validator:latest validators/pyproject/
+```
+
+```toml
+[preprocessor.validator.validators.pyproject]
+container = "pyproject-validator:latest"
+validate-command = "/validate.sh"
+```
+
 ## Writing Custom Validators
 
 Validators are shell scripts that receive JSON via stdin:
