@@ -177,11 +177,10 @@ num_workers = 0
 
 - **Language**: Rust (2021 edition)
 - **Core Dependencies**:
-  - `mdbook = "0.4.40"` - preprocessor interface (pin specific version for API stability)
+  - `mdbook_preprocessor = "0.5"` - preprocessor interface (mdBook 0.5.x split crates)
   - `testcontainers` - container lifecycle management (async only - see Async/Sync Bridging)
   - `bollard` - Docker API client for exec with env vars (testcontainers-rs uses this internally)
-  - `pulldown-cmark` - markdown parsing
-  - `pulldown-cmark-to-cmark` - markdown reconstruction (see Known Risks)
+  - `pulldown-cmark` - markdown parsing (use `into_offset_iter()` for source spans)
   - `serde`, `serde_json` - config and data handling
   - `anyhow` - error handling
   - `tracing` - logging
@@ -310,7 +309,7 @@ drop(input);  // Close stdin to signal EOF
 // Container cleanup happens automatically when `container` is dropped
 ```
 
-**Why this works**: testcontainers-rs uses bollard internally. `docker_client_instance()` returns the same `bollard::Docker` client, and `container.id()` gives us the container ID to target with bollard's exec API.
+**Why this works**: testcontainers-rs uses bollard internally. `docker_client_instance()` returns `Result<Docker, ClientError>` (verified in [docs.rs](https://docs.rs/testcontainers/latest/testcontainers/core/client/fn.docker_client_instance.html)), and `container.id()` gives us the container ID to target with bollard's exec API.
 
 **Success Criteria**: Can validate osquery SQL blocks, build fails on invalid SQL or schema errors
 
@@ -379,11 +378,11 @@ OUTPUT=$(echo "$CONTENT" | sqlite3 -json "$DB_FILE")
 **Goal**: Make builds reasonably fast
 
 **Realistic expectations**:
-- Container startup: 10-20 seconds per validator type (not 2-5 as originally estimated)
-- testcontainers-rs Issue #742 (container reuse) is still open as of late 2024
-- Target: 50 validations in < 3 minutes (not 60 seconds)
+- Container startup: 10-20 seconds per validator type
+- testcontainers-rs Issue #742 (container reuse) is still open
+- Target: 50 validations in < 3 minutes
 
-- [ ] Keep container handles alive for entire build via struct field (not OnceLock alone)
+- [ ] Keep container handles alive for entire build via struct field
 - [ ] Add benchmark suite to track performance
 - [ ] Evaluate bollard for direct container management if needed
 - [ ] Consider "external container mode" where user pre-starts containers
@@ -1163,17 +1162,8 @@ Error: Validation failed in src/network-queries.md
   | SELECT local_port, remote_address FROM listening_ports;
   | ```
 
-Validator output:
+Validator stderr:
   Error: no such table: listening_ports
-
-The table 'listening_ports' doesn't exist in osquery 5.12.1.
-
-Possible causes:
-  - Table was renamed in a recent osquery version
-  - Table is platform-specific (check osquery schema)
-  - Typo in table name
-
-See: https://osquery.io/schema/5.12.1/
 ```
 
 **Assertion failure**:
@@ -1181,26 +1171,18 @@ See: https://osquery.io/schema/5.12.1/
 Error: Assertion failed in src/examples.md
 
   | ```sql validator=sqlite
-  | <!--SETUP
-  | CREATE TABLE users (id INTEGER, name TEXT);
-  | INSERT INTO users VALUES (1, 'alice'), (2, 'bob');
-  | -->
   | SELECT COUNT(*) as total FROM users
-  | <!--ASSERT
-  | total = 5
-  | -->
   | ```
 
-Assertion details:
-  total = 5
+Assertion failed: rows = 5
   Expected: 5
   Actual:   2
 
-Query output:
+Validator output:
   [{"total": 2}]
 ```
 
-**osquery config error** (JSON, not TOML):
+**osquery config error**:
 ```
 Error: Validation failed in src/config.md
 
@@ -1211,11 +1193,11 @@ Error: Validation failed in src/config.md
   |   }
   | }
 
-Validator output:
-  Error: Error reading config: Invalid JSON
-
-Note: osquery configs must be valid JSON, not TOML.
+Validator stderr:
+  Error reading config: parse error at line 3
 ```
+
+**Note**: Error messages show the validator's raw output. We don't attempt to diagnose or interpret errors—the validator knows best what went wrong.
 
 ## Testing Strategy
 
@@ -1255,10 +1237,11 @@ Note: osquery configs must be valid JSON, not TOML.
 | Container tags | Specific versions | `:latest` and `:stable` are unpredictable |
 | ShellCheck container | `shellcheck-alpine:v0.10.0` | Scratch image has no shell; pin version, not `:stable` |
 | SQLite multiple SELECT | Run SETUP separately | sqlite3 -json produces invalid JSON with multiple SELECTs |
-| Performance target | ~3 min for 50 blocks | Container startup is 10-20s, not 2-5s |
+| Performance target | ~3 min for 50 blocks | Container startup is 10-20s each |
 | Reusable setups | Not in v1 | Keep it simple; inline everything |
 | Async runtime | tokio with `block_on` bridge | Required for bollard; see Async/Sync Bridging section |
-| mdbook version | Pin to 0.4.40 | API breaking changes between 0.4.x versions |
+| mdbook version | 0.5.1 via `mdbook_preprocessor` crate | Use split crate architecture; `parse_input` moved |
+| Markdown preservation | Byte-offset surgery | Use `into_offset_iter()` for spans, splice original source |
 
 ## Known Limitations
 
@@ -1272,9 +1255,100 @@ Note: osquery configs must be valid JSON, not TOML.
 
 5. **No line numbers**: Error messages show file but not exact line numbers (would require offset-to-line mapping).
 
-6. **Markdown round-trip fidelity**: pulldown-cmark-to-cmark has known issues with perfect round-tripping (see [pulldown-cmark issue #892](https://github.com/pulldown-cmark/pulldown-cmark/issues/892)). The preprocessor may subtly alter formatting in markdown it didn't intend to modify. Mitigation: only reconstruct code blocks that were validated, pass through unchanged content as-is.
+## Markdown Preservation via Byte-Offset Surgery
 
-7. **Async runtime requirement**: The bollard-based approach requires tokio. See "Async/Sync Bridging" section for the solution.
+We use pulldown-cmark's `into_offset_iter()` to get the exact byte ranges of code blocks, then splice the transformed content directly into the original source. This preserves all original formatting.
+
+### Implementation
+
+```rust
+use pulldown_cmark::{Parser, Event, Tag, CodeBlockKind, Options};
+use std::ops::Range;
+
+/// A code block with its source location
+struct LocatedCodeBlock {
+    info_string: String,
+    content_range: Range<usize>,  // Byte range of content within the code fence
+    full_range: Range<usize>,     // Byte range of entire fenced block including ```
+}
+
+/// Find all code blocks with their source byte ranges
+fn find_code_blocks(source: &str) -> Vec<LocatedCodeBlock> {
+    let parser = Parser::new_ext(source, Options::all());
+    let mut blocks = Vec::new();
+    let mut current_info = String::new();
+    let mut content_start = 0;
+
+    for (event, range) in parser.into_offset_iter() {
+        match event {
+            Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
+                current_info = info.to_string();
+                content_start = range.end; // Content starts after opening ```
+            }
+            Event::End(Tag::CodeBlock(CodeBlockKind::Fenced(_))) => {
+                // The range here covers the entire block including closing ```
+                // But we need to find where content ends (before closing ```)
+                let content_end = source[..range.end]
+                    .rfind("\n```")
+                    .unwrap_or(range.end);
+
+                blocks.push(LocatedCodeBlock {
+                    info_string: std::mem::take(&mut current_info),
+                    content_range: content_start..content_end,
+                    full_range: range,
+                });
+            }
+            _ => {}
+        }
+    }
+    blocks
+}
+
+/// Transform source by replacing code block contents
+fn transform_source(source: &str, replacements: &[(Range<usize>, String)]) -> String {
+    let mut result = String::with_capacity(source.len());
+    let mut last_end = 0;
+
+    // Sort replacements by start position
+    let mut sorted: Vec<_> = replacements.iter().collect();
+    sorted.sort_by_key(|(range, _)| range.start);
+
+    for (range, new_content) in sorted {
+        // Copy unchanged content before this block
+        result.push_str(&source[last_end..range.start]);
+        // Insert transformed content
+        result.push_str(new_content);
+        last_end = range.end;
+    }
+
+    // Copy remaining content after last replacement
+    result.push_str(&source[last_end..]);
+    result
+}
+```
+
+### What Gets Replaced
+
+For a validated code block like:
+````markdown
+```sql validator=sqlite
+<!--SETUP
+CREATE TABLE test (id INT);
+-->
+SELECT * FROM test;
+<!--ASSERT
+rows >= 1
+-->
+```
+````
+
+We:
+1. Parse to find the block's content range (everything between opening and closing ```)
+2. Validate the full content including markers
+3. Generate clean content: `SELECT * FROM test;\n`
+4. Replace ONLY the content bytes, preserving the fence markers and info string
+
+Result: The original ` ```sql validator=sqlite ` line stays exactly as written.
 
 ## Async/Sync Bridging
 
@@ -1283,9 +1357,9 @@ mdBook preprocessors implement a synchronous trait, but bollard requires an asyn
 ### The Problem
 
 ```rust
-// mdBook's Preprocessor trait is synchronous
+// mdBook's Preprocessor trait is synchronous (mdbook_preprocessor 0.5.x)
 impl Preprocessor for ValidatorPreprocessor {
-    fn run(&self, ctx: &PreprocessorContext, book: Book) -> Result<Book> {
+    fn run(&self, ctx: &PreprocessorContext, book: Book) -> Result<Book, Error> {
         // But bollard operations are async!
         // self.runner.execute(...).await  // ← Can't await in sync function!
     }
@@ -1295,7 +1369,7 @@ impl Preprocessor for ValidatorPreprocessor {
 ### Solution: Create Runtime Per Build
 
 ```rust
-use tokio::runtime::Runtime;
+use tokio::runtime::Builder;
 
 pub struct ValidatorPreprocessor {
     // Don't store the runtime - create fresh for each build
@@ -1306,10 +1380,12 @@ impl Preprocessor for ValidatorPreprocessor {
         "validator"
     }
 
-    fn run(&self, ctx: &PreprocessorContext, book: Book) -> Result<Book> {
-        // Create a new tokio runtime for this build
-        let rt = Runtime::new()
-            .map_err(|e| anyhow::anyhow!("Failed to create async runtime: {}", e))?;
+    fn run(&self, ctx: &PreprocessorContext, book: Book) -> Result<Book, Error> {
+        // Use current-thread runtime to avoid nested runtime panics
+        let rt = Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::msg(format!("Failed to create async runtime: {}", e)))?;
 
         // Run all async validation inside the runtime
         rt.block_on(async {
@@ -1344,18 +1420,7 @@ impl ValidatorPreprocessor {
 
 3. **Container pool lives within runtime**: The `ContainerPool` and its containers are created and dropped within the same runtime scope.
 
-### Why Not Use testcontainers Blocking Feature?
-
-testcontainers-rs has a `blocking` feature, but we don't use it because:
-1. We need bollard's `create_exec` with environment variables
-2. bollard is async-only
-3. `docker_client_instance()` returns an async client
-
-The async approach with `Runtime::block_on` is the correct pattern for this use case.
-
-### Performance Note
-
-Creating a tokio runtime has ~1ms overhead. For a build validating 50 blocks, this is negligible compared to container operations (seconds each).
+4. **bollard requires async**: We use bollard's `create_exec` with environment variables, which is async-only.
 
 ## Success Metrics
 
@@ -1375,19 +1440,18 @@ For v1 release, we've succeeded if:
 ## Resources
 
 - [mdBook preprocessor docs](https://rust-lang.github.io/mdBook/for_developers/preprocessors.html)
+- [mdbook_preprocessor crate (0.5.x)](https://docs.rs/mdbook_preprocessor/latest/mdbook_preprocessor/)
 - [testcontainers-rs docs](https://docs.rs/testcontainers/latest/testcontainers/)
 - [testcontainers-rs docker_client_instance](https://docs.rs/testcontainers/latest/testcontainers/core/client/fn.docker_client_instance.html)
 - [bollard Docker API docs](https://docs.rs/bollard/latest/bollard/)
 - [bollard CreateExecOptions](https://docs.rs/bollard/latest/bollard/exec/struct.CreateExecOptions.html)
 - [bollard attach_container example](https://github.com/fussybeaver/bollard/blob/master/examples/attach_container.rs)
 - [pulldown-cmark docs](https://docs.rs/pulldown-cmark/latest/pulldown_cmark/)
-- [pulldown-cmark-to-cmark docs](https://docs.rs/pulldown-cmark-to-cmark/latest/)
-- [pulldown-cmark round-trip issues (#892)](https://github.com/pulldown-cmark/pulldown-cmark/issues/892)
+- [pulldown-cmark into_offset_iter](https://docs.rs/pulldown-cmark/latest/pulldown_cmark/struct.Parser.html#method.into_offset_iter)
 - [osquery schema](https://osquery.io/schema/)
 - [osquery configuration (JSON)](https://osquery.readthedocs.io/en/stable/deployment/configuration/)
 - [validate-pyproject](https://pypi.org/project/validate-pyproject/)
 - [testcontainers-rs Issue #742 (container reuse)](https://github.com/testcontainers/testcontainers-rs/issues/742)
-- [mdBook Issue #1448 (0.4.6 breaking changes)](https://github.com/rust-lang/mdBook/issues/1448)
 
 ## Getting Started
 
@@ -1397,11 +1461,11 @@ cargo new mdbook-validator --bin
 cd mdbook-validator
 
 # Add dependencies
-cargo add mdbook@0.4.40 anyhow serde serde_json tracing tracing-subscriber
-cargo add pulldown-cmark pulldown-cmark-to-cmark
+cargo add mdbook_preprocessor anyhow serde serde_json tracing tracing-subscriber
+cargo add pulldown-cmark  # Use into_offset_iter() for byte spans
 cargo add testcontainers  # async only, no blocking feature
 cargo add bollard
-cargo add tokio --features=full
+cargo add tokio --features=rt
 cargo add futures-util
 cargo add regex  # For assertion pattern matching
 
@@ -1412,6 +1476,8 @@ mkdir -p src tests/fixtures validators
 ```
 
 **Note**: We use async testcontainers exclusively. The `blocking` feature is NOT used because we need bollard's async exec API. See "Async/Sync Bridging" section for how to integrate with mdBook's sync Preprocessor trait.
+
+**Note**: We do NOT use `pulldown-cmark-to-cmark`. Instead, we use byte-offset surgery to preserve original markdown formatting.
 
 ## Prototype Test (Run This First!)
 
@@ -1493,21 +1559,14 @@ If this passes, the core architecture is viable. If it fails, investigate before
 ### src/main.rs
 ```rust
 use anyhow::Result;
-use mdbook::preprocess::{CmdPreprocessor, Preprocessor};
+use mdbook_preprocessor::{Preprocessor, parse_input};
 use std::io;
 
 fn main() -> Result<()> {
     let preprocessor = mdbook_validator::ValidatorPreprocessor::new()?;
 
-    let (ctx, book) = CmdPreprocessor::parse_input(io::stdin())?;
-
-    if ctx.mdbook_version != mdbook::MDBOOK_VERSION {
-        eprintln!(
-            "Warning: mdbook version mismatch. Expected {}, got {}",
-            mdbook::MDBOOK_VERSION,
-            ctx.mdbook_version
-        );
-    }
+    // mdBook 0.5.x: parse_input is now a standalone function
+    let (ctx, book) = parse_input(io::stdin())?;
 
     let processed_book = preprocessor.run(&ctx, book)?;
     serde_json::to_writer(io::stdout(), &processed_book)?;
@@ -1789,8 +1848,7 @@ impl Default for MarkerConfig {
 }
 
 /// Process @@ hidden lines: returns (visible_content, validation_content)
-///
-/// BUG FIX: Preserves trailing newlines by checking if input ends with \n
+/// Preserves trailing newlines.
 fn process_hidden_lines(content: &str) -> (String, String) {
     let mut visible_lines = Vec::new();
     let mut all_lines = Vec::new();
@@ -1819,12 +1877,8 @@ fn process_hidden_lines(content: &str) -> (String, String) {
     (visible, all)
 }
 
-/// Extract content between marker_start and marker_end
-///
-/// BUG FIX:
-/// - Properly handles markers at start/end of content
-/// - Preserves whitespace structure in remaining content
-/// - Only finds the FIRST occurrence of each marker type
+/// Extract content between marker_start and marker_end.
+/// Handles markers at start/end of content and preserves whitespace structure.
 fn extract_marker(
     content: &str,
     marker_start: &str,
@@ -2018,7 +2072,7 @@ rows = 1
 
 Key design decisions:
 
-1. **Hybrid container approach** - testcontainers-rs for lifecycle + bollard for exec
+1. **Hybrid container approach** - testcontainers-rs for lifecycle + bollard for exec (API verified)
 2. **Environment variables only** - Simple input; 30KB limit enforced (docs examples should be concise)
 3. **Structured JSON output** - Validators return JSON; assertions parsed in Rust (not bash)
 4. **Rust-side assertion evaluation** - Handles embedded quotes, special chars, proper typing
@@ -2031,8 +2085,9 @@ Key design decisions:
 11. **Specific container tags** - No `:latest` or `:stable` (e.g., `osquery/osquery:5.12.1-ubuntu22.04`)
 12. **ShellCheck container** - Must use Alpine variant with pinned version (scratch image has no shell)
 13. **SQLite** - Run SETUP separately from query to avoid invalid JSON
-14. **Async/sync bridging** - Create tokio runtime per build, use `block_on`
+14. **Async/sync bridging** - Use `Builder::new_current_thread()` to avoid nested runtime panics
 15. **Realistic performance** - 10-20s container startup, ~3 min for 50 blocks
 16. **Inline setup only (v1)** - No reusable setup blocks from book.toml
-17. **Pin mdbook version** - Use `0.4.40` to avoid breaking changes between versions
-18. **Prototype first** - Run the prototype test to validate core data flow before full implementation
+17. **mdBook 0.5.1** - Use `mdbook_preprocessor` crate; `parse_input` is standalone function
+18. **Byte-offset surgery** - Use `into_offset_iter()` for source spans; splice original markdown
+19. **Prototype first** - Run the prototype test to validate core data flow before full implementation
