@@ -1,0 +1,9 @@
+edition = "2021"
+
+# Line width
+max_width = 100
+
+# Import organization
+reorder_imports = true
+group_imports = "StdExternalCrate"
+imports_granularity = "Module"
