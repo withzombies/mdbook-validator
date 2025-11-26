@@ -17,7 +17,8 @@ pub fn parse_info_string(info: &str) -> (String, Option<String>, bool) {
 
     let validator = parts
         .iter()
-        .find_map(|part| part.strip_prefix("validator=").map(ToString::to_string));
+        .find_map(|part| part.strip_prefix("validator=").map(ToString::to_string))
+        .filter(|v| !v.is_empty());
 
     let skip = parts.contains(&"skip");
 

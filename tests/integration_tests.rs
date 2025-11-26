@@ -154,6 +154,57 @@ fn main() {
     }
 }
 
+/// Test: Preprocessor returns error when validator exits non-zero.
+///
+/// This test requires Docker to be running.
+#[test]
+fn preprocessor_returns_error_on_validation_failure() {
+    let chapter_content = r"# Test Chapter
+
+```sql validator=test
+SELECT 1;
+```
+";
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    // Use a validator script that always fails
+    let failing_script = b"#!/bin/sh\necho 'Validation error: something went wrong' >&2\nexit 1\n";
+    let result = preprocessor.process_book_with_script(book, failing_script);
+
+    match result {
+        Ok(_) => {
+            panic!("Preprocessor should have returned an error for failing validator");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+
+            // If Docker isn't running, skip the test
+            if error_msg.contains("Docker") || error_msg.contains("container") {
+                println!("Skipping test - Docker may not be running: {e}");
+                return;
+            }
+
+            // Verify error contains expected information
+            assert!(
+                error_msg.contains("Validation failed"),
+                "Error should mention validation failed. Got: {error_msg}"
+            );
+            assert!(
+                error_msg.contains("exit code 1"),
+                "Error should mention exit code. Got: {error_msg}"
+            );
+            assert!(
+                error_msg.contains("something went wrong"),
+                "Error should include validator stderr. Got: {error_msg}"
+            );
+
+            println!("Failure test passed! Error message:\n{error_msg}");
+        }
+    }
+}
+
 /// Test: Preprocessor strips @@ hidden lines
 #[test]
 fn preprocessor_strips_hidden_lines() {

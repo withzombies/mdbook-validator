@@ -52,25 +52,48 @@ impl Preprocessor for ValidatorPreprocessor {
     }
 }
 
+/// Default validator script that always passes (exit 0)
+const DEFAULT_VALIDATOR_SCRIPT: &[u8] = b"#!/bin/sh\nexit 0\n";
+
 impl ValidatorPreprocessor {
     /// Process a book for validation without a `PreprocessorContext`.
     ///
     /// This is useful for testing when you don't have access to create a context.
-    pub fn process_book(&self, mut book: Book) -> Result<Book, Error> {
+    pub fn process_book(&self, book: Book) -> Result<Book, Error> {
+        self.process_book_with_script(book, DEFAULT_VALIDATOR_SCRIPT)
+    }
+
+    /// Process a book with a custom validator script.
+    ///
+    /// This is primarily for testing different validator behaviors.
+    pub fn process_book_with_script(
+        &self,
+        mut book: Book,
+        validator_script: &[u8],
+    ) -> Result<Book, Error> {
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|e| Error::msg(format!("Failed to create tokio runtime: {e}")))?;
 
-        rt.block_on(async { self.run_async(&mut book).await })?;
+        rt.block_on(async {
+            self.run_async_with_script(&mut book, validator_script)
+                .await
+        })?;
 
         Ok(book)
     }
 
     async fn run_async(&self, book: &mut Book) -> Result<(), Error> {
-        // Simple test validator script that exits 0 (pass)
-        let validator_script = b"#!/bin/sh\nexit 0\n";
+        self.run_async_with_script(book, DEFAULT_VALIDATOR_SCRIPT)
+            .await
+    }
 
+    async fn run_async_with_script(
+        &self,
+        book: &mut Book,
+        validator_script: &[u8],
+    ) -> Result<(), Error> {
         let container = ValidatorContainer::start(validator_script)
             .await
             .map_err(|e| Error::msg(format!("Failed to start container: {e}")))?;
