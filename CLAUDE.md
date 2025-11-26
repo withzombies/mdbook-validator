@@ -306,18 +306,11 @@ container = "keinos/sqlite3:3.47.2"
 validate-command = "/validators/validate-sqlite.sh"
 ```
 
-## Current Tasks (Phase 1 MVP)
+## Current Tasks
 
-- [ ] Set up Rust project structure with Cargo.toml
-- [ ] Implement mdBook preprocessor trait (stdin JSON -> stdout JSON)
-- [ ] Parse markdown with pulldown-cmark, find code blocks with `validator=` attribute
-- [ ] Extract SETUP, ASSERT, EXPECT markers from code block content
-- [ ] Start osquery container with testcontainers-rs (blocking feature)
-- [ ] Execute validator script via `sh -c "..."` wrapper (required for piping)
-- [ ] Create JSON input: `{setup, content, assertions, expect}`
-- [ ] Pass if validator exits 0, fail if non-zero
-- [ ] Strip all markers and return clean content to mdBook on success
-- [ ] Write integration test with test book
+Task tracking is managed via `bd` (beads). See `bd list` for current tasks.
+
+**Current Epic**: `mdbook-validator-wkm` (Project Scaffolding)
 
 ## Testing Strategy
 
@@ -398,6 +391,7 @@ On validation failure, show:
 [dependencies]
 mdbook = "0.4"
 anyhow = "1.0"
+thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 pulldown-cmark = "0.13"
@@ -405,6 +399,19 @@ pulldown-cmark-to-cmark = "21"
 testcontainers = { version = "0.23", features = ["blocking"] }
 tracing = "0.1"
 tracing-subscriber = "0.3"
+
+[dev-dependencies]
+cargo-husky = { version = "1.5", features = ["precommit-hook", "run-cargo-clippy", "run-cargo-fmt"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[lints.rust]
+unsafe_code = "deny"
 ```
 
 ## Quick Start for Development
