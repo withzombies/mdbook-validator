@@ -3,7 +3,5 @@ edition = "2021"
 # Line width
 max_width = 100
 
-# Import organization
+# Import organization (stable options only)
 reorder_imports = true
-group_imports = "StdExternalCrate"
-imports_granularity = "Module"

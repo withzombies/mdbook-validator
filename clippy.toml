@@ -1,0 +1,6 @@
+# Clippy configuration for mdbook-validator
+
+# Allow panic-related patterns in tests
+allow-unwrap-in-tests = true
+allow-expect-in-tests = true
+allow-indexing-slicing-in-tests = true

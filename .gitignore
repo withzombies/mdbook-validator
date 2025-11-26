@@ -135,3 +135,6 @@ Cargo.lock
 *.pdb
 
 # End of https://www.toptal.com/developers/gitignore/api/rust,mdbook,intellij
+
+
+.beads/issues.jsonl
