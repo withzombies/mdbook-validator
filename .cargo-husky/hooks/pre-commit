@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Pre-commit hook for mdbook-validator
+#
+# Runs:
+# 1. cargo fmt --check
+# 2. cargo clippy
+# 3. cargo nextest run
+
+set -e
+
+echo "Running pre-commit checks..."
+
+echo "Checking formatting..."
+cargo fmt --check
+
+echo "Running clippy..."
+cargo clippy --all-targets -- -D warnings
+
+echo "Running tests..."
+cargo nextest run
+
+echo "Pre-commit checks passed!"

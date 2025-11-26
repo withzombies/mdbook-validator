@@ -1,0 +1,12 @@
+#!/bin/sh
+set -e
+
+echo "Running pre-push checks..."
+
+echo "Running full test suite..."
+cargo nextest run
+
+echo "Running Docker integration tests..."
+cargo nextest run --profile docker-integration
+
+echo "Pre-push checks passed!"
