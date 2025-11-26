@@ -69,3 +69,29 @@ contains 'test.json'
     let expected = "SELECT path FROM alerts WHERE path LIKE '%.json'";
     assert_eq!(strip_markers(input), expected);
 }
+
+// === transpiler edge cases ===
+
+#[test]
+fn strip_markers_empty_double_at_line() {
+    // Just @@ with nothing after it (empty hidden line)
+    let input = "@@\nSELECT 1;";
+    let result = strip_markers(input);
+    assert_eq!(result, "SELECT 1;");
+}
+
+#[test]
+fn strip_markers_double_at_at_end_no_newline() {
+    // @@ at end without trailing newline
+    let input = "SELECT 1;\n@@hidden";
+    let result = strip_markers(input);
+    assert_eq!(result, "SELECT 1;");
+}
+
+#[test]
+fn strip_markers_only_markers_returns_empty() {
+    // Content with ONLY markers returns empty string
+    let input = "<!--SETUP\nCREATE TABLE t;\n-->\n<!--ASSERT\nrows >= 1\n-->";
+    let result = strip_markers(input);
+    assert_eq!(result, "");
+}
