@@ -59,9 +59,22 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
 
 ## Project Status
 
-**Current**: Planning/early implementation
-**Phase**: Phase 1 - Core preprocessor MVP
-**Next milestone**: Validate one SQL block against osquery
+**Current**: Project scaffolding in progress
+**Phase**: Phase 0 - Project Setup (Epic: `mdbook-validator-wkm`)
+**Completed**:
+- Cargo.toml with dependencies and strict clippy lints
+- rustfmt.toml with Edition 2021 style
+
+**In Progress**:
+- deny.toml for dependency license scanning
+
+**Remaining** (Phase 0):
+- `.config/nextest.toml` test profiles
+- `.cargo-husky/hooks/` pre-commit and pre-push hooks
+- Source module stubs (error.rs, preprocessor.rs, parser.rs, etc.)
+- Test structure (tests/integration_tests.rs, fixtures)
+
+**Next Phase**: Phase 1 - Core preprocessor MVP
 
 ## Key Design Decisions
 

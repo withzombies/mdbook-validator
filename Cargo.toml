@@ -1,0 +1,32 @@
+[package]
+name = "mdbook-validator"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75.0"
+description = "An mdBook preprocessor that validates code blocks using Docker containers"
+license = "MIT OR Apache-2.0"
+
+[dependencies]
+mdbook = "0.4"
+anyhow = "1.0"
+thiserror = "1.0"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+pulldown-cmark = "0.13"
+pulldown-cmark-to-cmark = "21"
+testcontainers = { version = "0.23", features = ["blocking"] }
+tracing = "0.1"
+tracing-subscriber = "0.3"
+
+[dev-dependencies]
+cargo-husky = { version = "1.5", features = ["precommit-hook", "run-cargo-clippy", "run-cargo-fmt"] }
+
+[lints.clippy]
+pedantic = { level = "deny", priority = -1 }
+missing_errors_doc = "allow"
+missing_panics_doc = "allow"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+
+[lints.rust]
+unsafe_code = "deny"
