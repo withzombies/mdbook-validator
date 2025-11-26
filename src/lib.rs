@@ -2,4 +2,13 @@
 //!
 //! An mdBook preprocessor that validates code blocks using Docker containers.
 
-// Module declarations will be added as implementation progresses
+pub mod config;
+pub mod container;
+pub mod error;
+pub mod parser;
+pub mod preprocessor;
+pub mod transpiler;
+pub mod validator;
+
+pub use error::{Result, ValidatorError};
+pub use preprocessor::ValidatorPreprocessor;
