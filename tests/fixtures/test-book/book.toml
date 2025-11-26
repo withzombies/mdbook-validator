@@ -1,0 +1,6 @@
+[book]
+title = "Test Book"
+authors = ["Test"]
+
+[preprocessor.validator]
+command = "mdbook-validator"
