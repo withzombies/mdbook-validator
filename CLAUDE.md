@@ -485,6 +485,8 @@ cargo nextest run
 
 5. **No reusable setups (v1)**: All setup content must be inline. No book.toml setup blocks.
 
+6. **rustfmt unstable features**: `imports_granularity` and `group_imports` in rustfmt.toml require nightly rustfmt. On stable, these produce warnings but don't affect formatting. The config is intentionally set for when stable rustfmt supports these features.
+
 ## Related Reading
 
 - [mdBook preprocessor docs](https://rust-lang.github.io/mdBook/for_developers/preprocessors.html)
