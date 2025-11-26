@@ -414,27 +414,63 @@ must_use_candidate = "allow"
 unsafe_code = "deny"
 ```
 
+## Development Setup
+
+### Required Tools
+
+```bash
+# Install cargo-deny for license/vulnerability scanning
+cargo install cargo-deny
+
+# Install cargo-nextest for fast parallel testing
+cargo install cargo-nextest
+```
+
+### Code Quality Commands
+
+```bash
+# Format check (runs on pre-commit)
+cargo fmt --check
+
+# Lint check with pedantic warnings as errors
+cargo clippy --all-targets -- -D warnings
+
+# License and vulnerability scanning
+cargo deny check
+
+# Run tests (parallel by default)
+cargo nextest run
+
+# Run tests including Docker integration tests (sequential)
+cargo nextest run --profile docker-integration
+```
+
+### Lint Configuration
+
+The project uses strict clippy lints (`pedantic = "deny"`) with these exceptions:
+- `missing_errors_doc` - allowed (reduces documentation burden)
+- `missing_panics_doc` - allowed (reduces documentation burden)
+- `module_name_repetitions` - allowed (e.g., `ValidatorError` in `validator` module)
+- `must_use_candidate` - allowed (reduces noise)
+
+Unsafe code is forbidden (`unsafe_code = "deny"`).
+
 ## Quick Start for Development
 
 ```bash
-# Create the project
-cargo new mdbook-validator --bin
+# Clone and enter the project
+git clone <repo-url>
 cd mdbook-validator
 
-# Add dependencies
-cargo add mdbook anyhow serde serde_json tracing tracing-subscriber
-cargo add pulldown-cmark pulldown-cmark-to-cmark
-cargo add testcontainers --features=blocking
+# Build the project
+cargo build
 
-# Create initial structure
-mkdir -p src tests/fixtures validators
+# Run code quality checks
+cargo fmt --check
+cargo clippy --all-targets -- -D warnings
 
 # Run tests
-cargo test
-
-# Try it with example book
-cd examples/osquery-docs
-mdbook build
+cargo nextest run
 ```
 
 ## Known Limitations
