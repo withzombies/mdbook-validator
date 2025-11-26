@@ -262,3 +262,193 @@ SELECT visible;
         }
     }
 }
+
+/// Test: Chapter with multiple validator= blocks (all validated, all stripped)
+#[test]
+fn preprocessor_handles_multiple_validator_blocks() {
+    let chapter_content = r"# Test Chapter
+
+First block:
+
+```sql validator=test
+<!--SETUP
+CREATE TABLE t1;
+-->
+SELECT 1;
+```
+
+Second block:
+
+```sql validator=test
+<!--SETUP
+CREATE TABLE t2;
+-->
+SELECT 2;
+<!--ASSERT
+rows >= 1
+-->
+```
+
+Third block (no validator):
+
+```rust
+fn main() {}
+```
+";
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book(book);
+
+    match result {
+        Ok(processed_book) => {
+            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+                panic!("Expected chapter");
+            };
+
+            let output = &chapter.content;
+
+            // All markers stripped from both validator blocks
+            assert!(
+                !output.contains("<!--SETUP"),
+                "SETUP markers should be stripped. Output:\n{output}"
+            );
+            assert!(
+                !output.contains("CREATE TABLE t1"),
+                "First setup should be stripped. Output:\n{output}"
+            );
+            assert!(
+                !output.contains("CREATE TABLE t2"),
+                "Second setup should be stripped. Output:\n{output}"
+            );
+            assert!(
+                !output.contains("<!--ASSERT"),
+                "ASSERT marker should be stripped. Output:\n{output}"
+            );
+
+            // Visible content remains
+            assert!(
+                output.contains("SELECT 1"),
+                "First SELECT should remain. Output:\n{output}"
+            );
+            assert!(
+                output.contains("SELECT 2"),
+                "Second SELECT should remain. Output:\n{output}"
+            );
+            assert!(
+                output.contains("fn main()"),
+                "Rust block should remain unchanged. Output:\n{output}"
+            );
+
+            println!("Multi-block test passed! Output:\n{output}");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+            if error_msg.contains("Docker") || error_msg.contains("container") {
+                println!("Skipping test - Docker may not be running: {e}");
+                return;
+            }
+            panic!("Preprocessor failed: {e}");
+        }
+    }
+}
+
+/// Creates a book with nested chapters
+fn create_book_with_nested_chapters() -> Book {
+    let parent_content = r"# Parent Chapter
+
+```sql validator=test
+<!--SETUP
+CREATE TABLE parent;
+-->
+SELECT 'parent';
+```
+";
+
+    let child_content = r"# Child Chapter
+
+```sql validator=test
+<!--SETUP
+CREATE TABLE child;
+-->
+SELECT 'child';
+```
+";
+
+    let child_chapter = Chapter::new(
+        "Child Chapter",
+        child_content.to_string(),
+        PathBuf::from("child.md"),
+        vec![],
+    );
+
+    let mut parent_chapter = Chapter::new(
+        "Parent Chapter",
+        parent_content.to_string(),
+        PathBuf::from("parent.md"),
+        vec![],
+    );
+    parent_chapter
+        .sub_items
+        .push(BookItem::Chapter(child_chapter));
+
+    let mut book = Book::new();
+    book.sections.push(BookItem::Chapter(parent_chapter));
+    book
+}
+
+/// Test: Nested sub-chapters processed recursively
+#[test]
+fn preprocessor_handles_nested_chapters() {
+    let book = create_book_with_nested_chapters();
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book(book);
+
+    match result {
+        Ok(processed_book) => {
+            // Check parent chapter
+            let Some(BookItem::Chapter(parent)) = processed_book.sections.first() else {
+                panic!("Expected parent chapter");
+            };
+
+            assert!(
+                !parent.content.contains("<!--SETUP"),
+                "Parent SETUP should be stripped. Output:\n{}",
+                parent.content
+            );
+            assert!(
+                parent.content.contains("SELECT 'parent'"),
+                "Parent SELECT should remain. Output:\n{}",
+                parent.content
+            );
+
+            // Check child chapter
+            let Some(BookItem::Chapter(child)) = parent.sub_items.first() else {
+                panic!("Expected child chapter");
+            };
+
+            assert!(
+                !child.content.contains("<!--SETUP"),
+                "Child SETUP should be stripped. Output:\n{}",
+                child.content
+            );
+            assert!(
+                child.content.contains("SELECT 'child'"),
+                "Child SELECT should remain. Output:\n{}",
+                child.content
+            );
+
+            println!("Nested chapters test passed!");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+            if error_msg.contains("Docker") || error_msg.contains("container") {
+                println!("Skipping test - Docker may not be running: {e}");
+                return;
+            }
+            panic!("Preprocessor failed: {e}");
+        }
+    }
+}
