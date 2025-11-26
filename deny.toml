@@ -1,0 +1,52 @@
+# cargo-deny configuration for mdbook-validator
+# https://embarkstudios.github.io/cargo-deny/
+
+[graph]
+all-features = true
+
+[advisories]
+ignore = [
+    # tokio-tar is a transitive dependency from testcontainers (dev-only).
+    # testcontainers needs to migrate to astral-tokio-tar.
+    # Tracked upstream: https://github.com/testcontainers/testcontainers-rs/issues
+    # This is a file smuggling vulnerability in PAX header parsing.
+    # Risk is mitigated: we only use testcontainers for build-time validation,
+    # not for processing untrusted tar files.
+    { id = "RUSTSEC-2025-0111", reason = "transitive dep from testcontainers; dev-only, low risk" },
+]
+
+[licenses]
+# Allowed licenses for dependencies
+allow = [
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
+    "MPL-2.0",
+    "CC0-1.0",
+    "Unlicense",
+]
+confidence-threshold = 0.8
+exceptions = []
+
+[licenses.private]
+ignore = false
+registries = []
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+highlight = "all"
+workspace-default-features = "allow"
+external-default-features = "allow"
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "warn"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
+allow-git = []
