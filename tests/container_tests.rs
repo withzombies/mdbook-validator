@@ -89,3 +89,60 @@ async fn exec_with_all_env_vars_set() {
     assert!(result.stdout.contains("assertions here"));
     assert!(result.stdout.contains("expected output"));
 }
+
+// ============================================================================
+// exec_raw tests (new host-based architecture)
+// ============================================================================
+
+#[tokio::test]
+async fn test_exec_raw_returns_output() {
+    // Test that exec_raw can run commands and capture output
+    let container = ValidatorContainer::start_raw("alpine:3")
+        .await
+        .expect("Docker available");
+
+    let result = container
+        .exec_raw(&["echo", "hello from exec_raw"])
+        .await
+        .expect("exec_raw succeeded");
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("hello from exec_raw"),
+        "stdout should contain echo output: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn test_exec_raw_captures_exit_code() {
+    // Test that exec_raw captures non-zero exit codes
+    let container = ValidatorContainer::start_raw("alpine:3")
+        .await
+        .expect("Docker available");
+
+    let result = container
+        .exec_raw(&["sh", "-c", "exit 42"])
+        .await
+        .expect("exec_raw succeeded");
+
+    assert_eq!(result.exit_code, 42, "exit code should be 42");
+}
+
+#[tokio::test]
+async fn test_exec_raw_nonexistent_command_fails() {
+    // Test that running nonexistent command returns error exit code
+    let container = ValidatorContainer::start_raw("alpine:3")
+        .await
+        .expect("Docker available");
+
+    let result = container
+        .exec_raw(&["nonexistent_binary_xyz_123"])
+        .await
+        .expect("exec_raw should not error, just return non-zero exit");
+
+    assert_ne!(
+        result.exit_code, 0,
+        "nonexistent command should have non-zero exit code"
+    );
+}
