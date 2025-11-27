@@ -4,6 +4,7 @@
 
 pub mod config;
 pub mod container;
+pub mod host_validator;
 pub mod parser;
 pub mod preprocessor;
 pub mod transpiler;
