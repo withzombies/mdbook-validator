@@ -37,9 +37,10 @@ OUTPUT=$(printf '%s\n' "$VALIDATOR_CONTENT" | sqlite3 -json "$DB_FILE" 2>&1) || 
     exit 1
 }
 
-# Count rows by counting lines with opening braces (each row starts with {)
-# SQLite JSON output format: [{...}, {...}, ...]
-ROW_COUNT=$(printf '%s\n' "$OUTPUT" | grep -c '^\s*{' 2>/dev/null) || ROW_COUNT=0
+# Count rows by counting opening braces that start JSON objects
+# SQLite JSON output format: [{"col":val},\n{"col":val}] (first row has leading [)
+# Count occurrences of {"  which marks start of each row object
+ROW_COUNT=$(printf '%s\n' "$OUTPUT" | grep -o '{\"' | wc -l | tr -d ' ') || ROW_COUNT=0
 
 # Evaluate assertions if provided
 if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
