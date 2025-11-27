@@ -31,16 +31,23 @@ pub struct ValidatorContainer {
 }
 
 impl ValidatorContainer {
-    /// Start a new validator container with the given script.
+    /// Start a new validator container with the given image and script.
     ///
     /// The script is copied to `/validate.sh` inside the container.
     /// Container uses `sleep infinity` to stay running for exec calls.
     ///
+    /// # Arguments
+    ///
+    /// * `image` - Docker image in "name:tag" format (e.g., "osquery/osquery:5.17.0-ubuntu22.04")
+    /// * `validator_script` - Script content to copy to `/validate.sh`
+    ///
     /// # Errors
     ///
     /// Returns error if Docker is not running or container fails to start.
-    pub async fn start(validator_script: &[u8]) -> Result<Self> {
-        let container = GenericImage::new("alpine", "3")
+    pub async fn start_with_image(image: &str, validator_script: &[u8]) -> Result<Self> {
+        let (name, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
+
+        let container = GenericImage::new(name, tag)
             .with_copy_to("/validate.sh", validator_script.to_vec())
             .with_cmd(["sleep", "infinity"])
             .start()
@@ -52,6 +59,18 @@ impl ValidatorContainer {
             _container: container,
             container_id,
         })
+    }
+
+    /// Start a new validator container with the default Alpine image.
+    ///
+    /// The script is copied to `/validate.sh` inside the container.
+    /// Container uses `sleep infinity` to stay running for exec calls.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if Docker is not running or container fails to start.
+    pub async fn start(validator_script: &[u8]) -> Result<Self> {
+        Self::start_with_image("alpine:3", validator_script).await
     }
 
     /// Execute validator with environment variables.
