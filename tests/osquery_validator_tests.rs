@@ -1,7 +1,7 @@
 //! osquery validator integration tests
 //!
-//! Tests for validate-osquery.sh running in osquery container.
-//! All tests use real osquery container - no mocking.
+//! Tests for validate-osquery.sh running as host-based validator.
+//! Container runs osqueryi, host validates JSON output with jq.
 //!
 //! Tests are allowed to panic for assertions and test failure.
 #![allow(
@@ -10,36 +10,73 @@
     clippy::unwrap_used,
     clippy::print_stdout,
     clippy::print_stderr,
-    clippy::uninlined_format_args
+    clippy::uninlined_format_args,
+    clippy::cast_possible_truncation
 )]
 
 use mdbook_validator::container::ValidatorContainer;
+use mdbook_validator::host_validator;
 
 const OSQUERY_IMAGE: &str = "osquery/osquery:5.17.0-ubuntu22.04";
+const VALIDATOR_SCRIPT: &str = "validators/validate-osquery.sh";
 
-/// Helper to run osquery validator with given SQL and optional assertions
+/// Helper to run osquery query with host-based validation.
+///
+/// 1. Starts container with osqueryi (no script injection)
+/// 2. Runs query SQL in container with --json flag
+/// 3. Validates JSON output on host using validator script
 async fn run_osquery_validator(
     sql: &str,
     assertions: Option<&str>,
     expect: Option<&str>,
-) -> (i64, String, String) {
-    let script = std::fs::read("validators/validate-osquery.sh")
-        .expect("validator script must exist at validators/validate-osquery.sh");
-
-    let container = ValidatorContainer::start_with_image(OSQUERY_IMAGE, &script)
+) -> (i32, String, String) {
+    let container = ValidatorContainer::start_raw(OSQUERY_IMAGE)
         .await
         .expect("osquery container should start");
 
-    let result = container
-        .exec_with_env(None, sql, assertions, expect)
+    // Handle empty SQL
+    let sql = sql.trim();
+    if sql.is_empty() {
+        return (
+            1,
+            String::new(),
+            "Query failed: VALIDATOR_CONTENT is empty".to_owned(),
+        );
+    }
+
+    // Run query with JSON output
+    let cmd = format!("osqueryi --json \"{}\"", sql);
+    let query_result = container
+        .exec_raw(&["sh", "-c", &cmd])
         .await
-        .expect("exec should succeed");
+        .expect("query exec should succeed");
 
-    println!("Exit code: {}", result.exit_code);
-    println!("Stdout: {}", result.stdout);
-    println!("Stderr: {}", result.stderr);
+    println!("Query exit code: {}", query_result.exit_code);
+    println!("Query stdout: {}", query_result.stdout);
+    println!("Query stderr: {}", query_result.stderr);
 
-    (result.exit_code, result.stdout, result.stderr)
+    if query_result.exit_code != 0 {
+        return (
+            query_result.exit_code as i32,
+            query_result.stdout,
+            format!("Query failed: {}", query_result.stderr),
+        );
+    }
+
+    // Validate JSON output on host
+    let validation_result =
+        host_validator::run_validator(VALIDATOR_SCRIPT, &query_result.stdout, assertions, expect)
+            .expect("host validator should run");
+
+    println!("Validation exit code: {}", validation_result.exit_code);
+    println!("Validation stdout: {}", validation_result.stdout);
+    println!("Validation stderr: {}", validation_result.stderr);
+
+    (
+        validation_result.exit_code,
+        query_result.stdout, // Return JSON output from query
+        validation_result.stderr,
+    )
 }
 
 /// Test: Valid SQL query passes validation

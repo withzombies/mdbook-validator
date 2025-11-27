@@ -13,6 +13,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 use crate::config::{Config, ValidatorConfig};
 use crate::container::ValidatorContainer;
+use crate::host_validator;
 use crate::parser::{extract_markers, parse_info_string, ExtractedMarkers};
 use crate::transpiler::strip_markers;
 
@@ -273,42 +274,28 @@ impl ValidatorPreprocessor {
                 continue;
             }
 
+            // Get validator config
+            let validator_config = config.get_validator(&block.validator_name).map_err(|e| {
+                Error::msg(format!(
+                    "Unknown validator '{}': {}",
+                    block.validator_name, e
+                ))
+            })?;
+
             // Get or start container for this validator
             let container = self
-                .get_or_start_container(&block.validator_name, config, book_root, containers)
+                .get_or_start_container(&block.validator_name, config, containers)
                 .await?;
 
-            let result = container
-                .exec_with_env(
-                    block.markers.setup.as_deref(),
-                    &block.markers.visible_content,
-                    block.markers.assertions.as_deref(),
-                    block.markers.expect.as_deref(),
-                )
-                .await
-                .map_err(|e| {
-                    Error::msg(format!(
-                        "Validation exec failed in '{}' for validator '{}': {}",
-                        chapter.name, block.validator_name, e
-                    ))
-                })?;
-
-            if result.exit_code != 0 {
-                let mut error_msg = format!(
-                    "Validation failed in '{}' (validator: {}, exit code {}):\n\nCode:\n{}\n",
-                    chapter.name,
-                    block.validator_name,
-                    result.exit_code,
-                    block.markers.visible_content
-                );
-                if !result.stderr.is_empty() {
-                    let _ = write!(error_msg, "\nValidator stderr:\n{}", result.stderr);
-                }
-                if !result.stdout.is_empty() {
-                    let _ = write!(error_msg, "\nValidator stdout:\n{}", result.stdout);
-                }
-                return Err(Error::msg(error_msg));
-            }
+            // Use host-based validation: run query in container, validate on host
+            self.validate_block_host_based(
+                container,
+                validator_config,
+                block,
+                &chapter.name,
+                book_root,
+            )
+            .await?;
         }
 
         // All validations passed - strip markers from chapter content
@@ -317,12 +304,148 @@ impl ValidatorPreprocessor {
         Ok(())
     }
 
+    /// Validate a code block using host-based validation.
+    ///
+    /// This runs the query in the container and validates the output on the host.
+    async fn validate_block_host_based(
+        &self,
+        container: &ValidatorContainer,
+        validator_config: &ValidatorConfig,
+        block: &ValidatorBlock,
+        chapter_name: &str,
+        book_root: &Path,
+    ) -> Result<(), Error> {
+        // 0. Verify validator script exists first (fail fast before container work)
+        let script_path = book_root.join(&validator_config.script);
+        if !script_path.exists() {
+            return Err(Error::msg(format!(
+                "Failed to read validator script '{}': file not found",
+                script_path.display()
+            )));
+        }
+
+        // Get setup and query commands (use defaults if not configured)
+        let (setup_cmd, query_cmd) =
+            Self::get_validator_commands(&block.validator_name, validator_config);
+
+        // 1. Run setup in container (if any)
+        if let Some(setup) = &block.markers.setup {
+            let setup_sql = setup.trim();
+            if !setup_sql.is_empty() {
+                let cmd = format!("{setup_cmd} \"{setup_sql}\"");
+                let setup_result = container
+                    .exec_raw(&["sh", "-c", &cmd])
+                    .await
+                    .map_err(|e| Error::msg(format!("Setup exec failed: {e}")))?;
+
+                if setup_result.exit_code != 0 {
+                    return Err(Error::msg(format!(
+                        "Setup failed in '{}' (validator: {}):\n\nSetup SQL:\n{}\n\nError:\n{}",
+                        chapter_name, block.validator_name, setup_sql, setup_result.stderr
+                    )));
+                }
+            }
+        }
+
+        // 2. Run query in container, get JSON output
+        let query_sql = block.markers.visible_content.trim();
+        if query_sql.is_empty() {
+            return Err(Error::msg(format!(
+                "Validation failed in '{}' (validator: {}): Query content is empty",
+                chapter_name, block.validator_name
+            )));
+        }
+
+        let cmd = format!("{query_cmd} \"{query_sql}\"");
+        let query_result = container
+            .exec_raw(&["sh", "-c", &cmd])
+            .await
+            .map_err(|e| Error::msg(format!("Query exec failed: {e}")))?;
+
+        if query_result.exit_code != 0 {
+            return Err(Error::msg(format!(
+                "Query failed in '{}' (validator: {}):\n\nSQL:\n{}\n\nError:\n{}",
+                chapter_name, block.validator_name, query_sql, query_result.stderr
+            )));
+        }
+
+        // 3. Validate JSON output on host using validator script
+        // (script_path already validated at the start of this function)
+        let script_path_str = script_path
+            .to_str()
+            .ok_or_else(|| Error::msg(format!("Invalid script path: {}", script_path.display())))?;
+
+        let validation_result = host_validator::run_validator(
+            script_path_str,
+            &query_result.stdout,
+            block.markers.assertions.as_deref(),
+            block.markers.expect.as_deref(),
+        )
+        .map_err(|e| {
+            Error::msg(format!(
+                "Host validator failed in '{}' (validator: {}): {}",
+                chapter_name, block.validator_name, e
+            ))
+        })?;
+
+        if validation_result.exit_code != 0 {
+            let mut error_msg = format!(
+                "Validation failed in '{}' (validator: {}, exit code {}):\n\nCode:\n{}\n",
+                chapter_name,
+                block.validator_name,
+                validation_result.exit_code,
+                block.markers.visible_content
+            );
+            if !validation_result.stderr.is_empty() {
+                let _ = write!(
+                    error_msg,
+                    "\nValidator stderr:\n{}",
+                    validation_result.stderr
+                );
+            }
+            if !validation_result.stdout.is_empty() {
+                let _ = write!(
+                    error_msg,
+                    "\nValidator stdout:\n{}",
+                    validation_result.stdout
+                );
+            }
+            return Err(Error::msg(error_msg));
+        }
+
+        Ok(())
+    }
+
+    /// Get setup and query commands for a validator.
+    ///
+    /// Uses configured commands if available, otherwise uses defaults based on validator name.
+    fn get_validator_commands(validator_name: &str, config: &ValidatorConfig) -> (String, String) {
+        let setup_cmd = config
+            .setup_command
+            .clone()
+            .unwrap_or_else(|| match validator_name {
+                "sqlite" => "sqlite3 /tmp/test.db".to_owned(),
+                "osquery" => "osqueryi".to_owned(),
+                _ => "sh -c".to_owned(),
+            });
+
+        let query_cmd = config
+            .query_command
+            .clone()
+            .unwrap_or_else(|| match validator_name {
+                "sqlite" => "sqlite3 -json /tmp/test.db".to_owned(),
+                "osquery" => "osqueryi --json".to_owned(),
+                _ => "sh -c".to_owned(),
+            });
+
+        (setup_cmd, query_cmd)
+    }
+
     /// Get an existing container or start a new one for the given validator.
     async fn get_or_start_container<'a>(
         &self,
         validator_name: &str,
         config: &Config,
-        book_root: &Path,
         containers: &'a mut HashMap<String, ValidatorContainer>,
     ) -> Result<&'a ValidatorContainer, Error> {
         // Check if we already have this container running
@@ -345,10 +468,15 @@ impl ValidatorPreprocessor {
             ))
         })?;
 
-        // Start the container
-        let container = self
-            .start_validator_container(validator_config, book_root)
-            .await?;
+        // Start the container (no script injection - host-based validation)
+        let container = ValidatorContainer::start_raw(&validator_config.container)
+            .await
+            .map_err(|e| {
+                Error::msg(format!(
+                    "Failed to start container '{}': {}",
+                    validator_config.container, e
+                ))
+            })?;
 
         containers.insert(validator_name.to_owned(), container);
 
@@ -356,33 +484,6 @@ impl ValidatorPreprocessor {
         Ok(containers
             .get(validator_name)
             .unwrap_or_else(|| unreachable!()))
-    }
-
-    /// Start a container for the given validator config.
-    async fn start_validator_container(
-        &self,
-        config: &ValidatorConfig,
-        book_root: &Path,
-    ) -> Result<ValidatorContainer, Error> {
-        // Load script from configured path (relative to book root)
-        let script_path = book_root.join(&config.script);
-        let script_content = std::fs::read(&script_path).map_err(|e| {
-            Error::msg(format!(
-                "Failed to read validator script '{}': {}",
-                script_path.display(),
-                e
-            ))
-        })?;
-
-        // Start container with configured image
-        ValidatorContainer::start_with_image(&config.container, &script_content)
-            .await
-            .map_err(|e| {
-                Error::msg(format!(
-                    "Failed to start container '{}': {}",
-                    config.container, e
-                ))
-            })
     }
 
     /// Find all code blocks with `validator=` attribute

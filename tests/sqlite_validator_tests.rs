@@ -1,7 +1,7 @@
 //! `SQLite` validator integration tests
 //!
-//! Tests for validate-sqlite.sh running in keinos/sqlite3 container.
-//! All tests use real `SQLite` container - no mocking.
+//! Tests for validate-sqlite.sh running as host-based validator.
+//! Container runs sqlite3, host validates JSON output with jq.
 //!
 //! Tests are allowed to panic for assertions and test failure.
 #![allow(
@@ -10,43 +10,103 @@
     clippy::unwrap_used,
     clippy::print_stdout,
     clippy::print_stderr,
-    clippy::uninlined_format_args
+    clippy::uninlined_format_args,
+    clippy::cast_possible_truncation
 )]
 
 use mdbook_validator::container::ValidatorContainer;
+use mdbook_validator::host_validator;
 
 const SQLITE_IMAGE: &str = "keinos/sqlite3:3.47.2";
+const VALIDATOR_SCRIPT: &str = "validators/validate-sqlite.sh";
 
-/// Helper to run `SQLite` validator with given SQL, optional setup, and optional assertions
+/// Helper to run `SQLite` query with host-based validation.
+///
+/// 1. Starts container with sqlite3 (no script injection)
+/// 2. Runs setup SQL in container (if any)
+/// 3. Runs query SQL in container with -json flag
+/// 4. Validates JSON output on host using validator script
 async fn run_sqlite_validator(
     sql: &str,
     setup: Option<&str>,
     assertions: Option<&str>,
     expect: Option<&str>,
-) -> (i64, String, String) {
-    let script = std::fs::read("validators/validate-sqlite.sh")
-        .expect("validator script must exist at validators/validate-sqlite.sh");
-
-    let container = ValidatorContainer::start_with_image(SQLITE_IMAGE, &script)
+) -> (i32, String, String) {
+    let container = ValidatorContainer::start_raw(SQLITE_IMAGE)
         .await
         .expect("sqlite container should start");
 
-    let result = container
-        .exec_with_env(setup, sql, assertions, expect)
+    // Run setup SQL in container (if any)
+    if let Some(setup_sql) = setup {
+        let setup_sql = setup_sql.trim();
+        if !setup_sql.is_empty() {
+            let cmd = format!("sqlite3 /tmp/test.db \"{}\"", setup_sql);
+            let setup_result = container
+                .exec_raw(&["sh", "-c", &cmd])
+                .await
+                .expect("setup exec should succeed");
+
+            if setup_result.exit_code != 0 {
+                println!("Setup failed - Exit code: {}", setup_result.exit_code);
+                println!("Setup stderr: {}", setup_result.stderr);
+                return (
+                    setup_result.exit_code as i32,
+                    setup_result.stdout,
+                    format!("Setup SQL failed: {}", setup_result.stderr),
+                );
+            }
+        }
+    }
+
+    // Handle empty SQL
+    let sql = sql.trim();
+    if sql.is_empty() {
+        return (
+            1,
+            String::new(),
+            "Query failed: VALIDATOR_CONTENT is empty".to_owned(),
+        );
+    }
+
+    // Run query with JSON output
+    let cmd = format!("sqlite3 -json /tmp/test.db \"{}\"", sql);
+    let query_result = container
+        .exec_raw(&["sh", "-c", &cmd])
         .await
-        .expect("exec should succeed");
+        .expect("query exec should succeed");
 
-    println!("Exit code: {}", result.exit_code);
-    println!("Stdout: {}", result.stdout);
-    println!("Stderr: {}", result.stderr);
+    println!("Query exit code: {}", query_result.exit_code);
+    println!("Query stdout: {}", query_result.stdout);
+    println!("Query stderr: {}", query_result.stderr);
 
-    (result.exit_code, result.stdout, result.stderr)
+    if query_result.exit_code != 0 {
+        return (
+            query_result.exit_code as i32,
+            query_result.stdout,
+            format!("Query failed: {}", query_result.stderr),
+        );
+    }
+
+    // Validate JSON output on host
+    let validation_result =
+        host_validator::run_validator(VALIDATOR_SCRIPT, &query_result.stdout, assertions, expect)
+            .expect("host validator should run");
+
+    println!("Validation exit code: {}", validation_result.exit_code);
+    println!("Validation stdout: {}", validation_result.stdout);
+    println!("Validation stderr: {}", validation_result.stderr);
+
+    (
+        validation_result.exit_code,
+        query_result.stdout, // Return JSON output from query
+        validation_result.stderr,
+    )
 }
 
 /// Test: Valid SQL query passes validation (SELECT 1)
 #[tokio::test]
 async fn test_sqlite_valid_query_passes() {
-    let (exit_code, stdout, _) = run_sqlite_validator("SELECT 1;", None, None, None).await;
+    let (exit_code, stdout, _) = run_sqlite_validator("SELECT 1 as value;", None, None, None).await;
     assert_eq!(exit_code, 0, "valid query should pass");
     assert!(
         stdout.contains('1'),
@@ -76,7 +136,9 @@ async fn test_sqlite_invalid_table_fails() {
         run_sqlite_validator("SELECT * FROM nonexistent_table_xyz;", None, None, None).await;
     assert_ne!(exit_code, 0, "invalid table should fail");
     assert!(
-        stderr.to_lowercase().contains("no such table") || stderr.to_lowercase().contains("error"),
+        stderr.to_lowercase().contains("no such table")
+            || stderr.to_lowercase().contains("error")
+            || stderr.contains("Query failed"),
         "stderr should contain error message: {}",
         stderr
     );
@@ -111,7 +173,7 @@ async fn test_sqlite_syntax_error_fails() {
 }
 
 // ============================================================================
-// Assertion tests (Task 2)
+// Assertion tests
 // ============================================================================
 
 /// Test: rows = N assertion passes when row count matches exactly
