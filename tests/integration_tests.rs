@@ -6,7 +6,8 @@
     clippy::expect_used,
     clippy::unwrap_used,
     clippy::print_stdout,
-    clippy::str_to_string
+    clippy::str_to_string,
+    clippy::needless_raw_string_hashes
 )]
 
 use mdbook::book::{Book, BookItem, Chapter};
@@ -115,12 +116,6 @@ More text after.
             println!("Integration test passed! Output:\n{output}");
         }
         Err(e) => {
-            // If Docker isn't running, skip the test rather than failing
-            let error_msg = format!("{e}");
-            if error_msg.contains("Docker") || error_msg.contains("container") {
-                println!("Skipping test - Docker may not be running: {e}");
-                return;
-            }
             panic!("Preprocessor failed: {e}");
         }
     }
@@ -150,11 +145,6 @@ fn main() {
             println!("Test passed - chapters with no validator blocks handled correctly");
         }
         Err(e) => {
-            let error_msg = format!("{e}");
-            if error_msg.contains("Docker") || error_msg.contains("container") {
-                println!("Skipping test - Docker may not be running: {e}");
-                return;
-            }
             panic!("Preprocessor failed on content with no validator blocks: {e}");
         }
     }
@@ -185,12 +175,6 @@ SELECT 1;
         }
         Err(e) => {
             let error_msg = format!("{e}");
-
-            // If Docker isn't running, skip the test
-            if error_msg.contains("Docker") || error_msg.contains("container") {
-                println!("Skipping test - Docker may not be running: {e}");
-                return;
-            }
 
             // Verify error contains expected information
             assert!(
@@ -259,11 +243,6 @@ SELECT visible;
             println!("Hidden lines test passed! Output:\n{output}");
         }
         Err(e) => {
-            let error_msg = format!("{e}");
-            if error_msg.contains("Docker") || error_msg.contains("container") {
-                println!("Skipping test - Docker may not be running: {e}");
-                return;
-            }
             panic!("Preprocessor failed: {e}");
         }
     }
@@ -350,11 +329,6 @@ fn main() {}
             println!("Multi-block test passed! Output:\n{output}");
         }
         Err(e) => {
-            let error_msg = format!("{e}");
-            if error_msg.contains("Docker") || error_msg.contains("container") {
-                println!("Skipping test - Docker may not be running: {e}");
-                return;
-            }
             panic!("Preprocessor failed: {e}");
         }
     }
@@ -449,12 +423,186 @@ fn preprocessor_handles_nested_chapters() {
             println!("Nested chapters test passed!");
         }
         Err(e) => {
-            let error_msg = format!("{e}");
-            if error_msg.contains("Docker") || error_msg.contains("container") {
-                println!("Skipping test - Docker may not be running: {e}");
-                return;
-            }
             panic!("Preprocessor failed: {e}");
+        }
+    }
+}
+
+// ============================================================================
+// Config-based validator tests
+// ============================================================================
+
+use mdbook_validator::config::{Config, ValidatorConfig};
+use std::collections::HashMap;
+
+/// Test: Preprocessor uses configured validator with osquery container
+///
+/// This is the key integration test that verifies end-to-end flow:
+/// 1. Config is parsed
+/// 2. Correct container image is used
+/// 3. Validator script is loaded from configured path
+/// 4. Validation runs and markers are stripped
+#[test]
+fn preprocessor_uses_configured_osquery_validator() {
+    // Get the project root (where validators/ directory is)
+    let book_root = std::env::current_dir().expect("should get current dir");
+
+    // Build config programmatically
+    let mut validators = HashMap::new();
+    validators.insert(
+        "osquery".to_string(),
+        ValidatorConfig {
+            container: "osquery/osquery:5.17.0-ubuntu22.04".to_string(),
+            script: PathBuf::from("validators/validate-osquery.sh"),
+        },
+    );
+
+    let config = Config {
+        validators,
+        fail_fast: true,
+    };
+
+    // Verify the validator script exists
+    let script_path = book_root.join("validators/validate-osquery.sh");
+    assert!(
+        script_path.exists(),
+        "Validator script must exist at {}",
+        script_path.display()
+    );
+
+    // Create a book with osquery SQL
+    // Use simple query that works in any osquery container (no data dependencies)
+    let chapter_content = r#"# osquery Test
+
+```sql validator=osquery
+SELECT uid, username FROM users LIMIT 1;
+<!--ASSERT
+rows >= 1
+-->
+```
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    // Process with config
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(processed_book) => {
+            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+                panic!("Expected chapter");
+            };
+
+            let output = &chapter.content;
+
+            // Verify markers were stripped
+            assert!(
+                !output.contains("<!--ASSERT"),
+                "ASSERT marker should be stripped. Output:\n{output}"
+            );
+            assert!(
+                !output.contains("rows >= 1"),
+                "Assertion content should be stripped. Output:\n{output}"
+            );
+
+            // Verify visible content remains
+            assert!(
+                output.contains("SELECT uid, username FROM users"),
+                "SQL query should remain. Output:\n{output}"
+            );
+
+            println!("osquery config test passed! Output:\n{output}");
+        }
+        Err(e) => {
+            panic!("Preprocessor failed with configured osquery validator: {e}");
+        }
+    }
+}
+
+/// Test: Preprocessor errors for unknown validator name
+#[test]
+fn preprocessor_errors_for_unknown_validator() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+
+    // Config with NO validators defined
+    let config = Config {
+        validators: HashMap::new(),
+        fail_fast: true,
+    };
+
+    // Create a book with unknown validator
+    let chapter_content = r#"# Test
+
+```sql validator=nonexistent
+SELECT 1;
+```
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(_) => {
+            panic!("Should have failed for unknown validator");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+            assert!(
+                error_msg.contains("Unknown validator") || error_msg.contains("nonexistent"),
+                "Error should mention unknown validator: {error_msg}"
+            );
+            println!("Unknown validator test passed! Error: {error_msg}");
+        }
+    }
+}
+
+/// Test: Preprocessor errors when validator script not found
+#[test]
+fn preprocessor_errors_for_missing_script() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+
+    // Config with non-existent script
+    let mut validators = HashMap::new();
+    validators.insert(
+        "test".to_string(),
+        ValidatorConfig {
+            container: "alpine:3".to_string(),
+            script: PathBuf::from("validators/does-not-exist.sh"),
+        },
+    );
+
+    let config = Config {
+        validators,
+        fail_fast: true,
+    };
+
+    let chapter_content = r#"# Test
+
+```sql validator=test
+SELECT 1;
+```
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(_) => {
+            panic!("Should have failed for missing script");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+            assert!(
+                error_msg.contains("Failed to read validator script")
+                    || error_msg.contains("does-not-exist"),
+                "Error should mention missing script: {error_msg}"
+            );
+            println!("Missing script test passed! Error: {error_msg}");
         }
     }
 }

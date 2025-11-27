@@ -53,7 +53,7 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
 - **pulldown-cmark** - parses markdown
 - **pulldown-cmark-to-cmark** - reconstructs markdown after modification
 - **Containers** (specific tags, NOT :latest):
-  - `osquery/osquery:5.12.1-ubuntu22.04` - osquery SQL and JSON config validation
+  - `osquery/osquery:5.17.0-ubuntu22.04` - osquery SQL and JSON config validation
   - `keinos/sqlite3:3.47.2` - SQLite validation with setup support
   - `koalaman/shellcheck-alpine:stable` - shell script static analysis
 
@@ -294,11 +294,11 @@ fail-fast = true
 
 # Validators - use specific tags, NOT :latest
 [preprocessor.validator.validators.osquery]
-container = "osquery/osquery:5.12.1-ubuntu22.04"
+container = "osquery/osquery:5.17.0-ubuntu22.04"
 validate-command = "/validators/validate-osquery.sh"
 
 [preprocessor.validator.validators.osquery-config]
-container = "osquery/osquery:5.12.1-ubuntu22.04"
+container = "osquery/osquery:5.17.0-ubuntu22.04"
 validate-command = "/validators/validate-osquery-config.sh"
 
 [preprocessor.validator.validators.sqlite]
@@ -321,6 +321,67 @@ Task tracking is managed via `bd` (beads). See `bd list` for current tasks.
 Test fixtures include:
 - `valid-examples.md` - Should pass validation
 - `invalid-examples.md` - Should fail validation
+
+### TDD Principles (MANDATORY)
+
+Follow RED-GREEN-REFACTOR:
+1. **RED**: Write a failing test first
+2. **GREEN**: Write minimal code to pass the test
+3. **REFACTOR**: Clean up while keeping tests green
+
+### Test Anti-Patterns (FORBIDDEN)
+
+**NEVER skip tests based on environment:**
+```rust
+// ❌ WRONG - Hides real failures as "skipped"
+if error_msg.contains("Docker") {
+    println!("Skipping test - Docker not available");
+    return;
+}
+
+// ✅ CORRECT - Test fails, problem is visible
+panic!("Test failed: {e}");
+```
+
+**Why this matters:**
+- Skip logic hides real bugs (e.g., wrong image tag returns 404, matches "docker", test "passes")
+- Tests should fail loudly when requirements aren't met
+- CI/CD should fail if Docker isn't available, not silently skip tests
+- "Skipped" tests give false confidence
+
+**NEVER use `#[ignore]` without a tracking issue:**
+```rust
+// ❌ WRONG - Test forgotten forever
+#[ignore]
+#[test]
+fn broken_test() { ... }
+
+// ✅ CORRECT - If must ignore, track it
+#[ignore = "TODO(#123): Fix after upstream bug resolved"]
+#[test]
+fn temporarily_broken() { ... }
+```
+
+**NEVER catch-all error handling in tests:**
+```rust
+// ❌ WRONG - Masks which errors are expected
+Err(e) => {
+    if e.to_string().contains("expected") { return; }
+    panic!("{e}");
+}
+
+// ✅ CORRECT - Be explicit about expected errors
+Err(e) => {
+    assert!(e.to_string().contains("Validation failed"));
+}
+```
+
+### Test Requirements
+
+- All tests MUST fail (panic) on unexpected errors
+- All tests MUST pass in CI with Docker available
+- Container tests use real containers, no mocking
+- Coverage target: 80% on core modules (parser, transpiler, container, preprocessor)
 
 ## Important Implementation Notes
 
@@ -384,6 +445,7 @@ On validation failure, show:
 8. **Don't put `-->` inside marker content** - The marker end sequence inside content will break parsing
 9. **Don't combine SETUP and SELECT in sqlite3 -json** - Run SETUP separately (sqlite3 -json produces invalid JSON with multiple statements)
 10. **osquery config is JSON, not TOML** - This is a common misconception
+11. **Don't skip tests based on environment** - Tests must fail loudly, not silently skip (skip logic hides real bugs like wrong image tags)
 
 ## Dependencies (Cargo.toml)
 
@@ -536,7 +598,7 @@ Build an mdBook preprocessor in Rust that:
 
 **Critical details**:
 - osquery config is JSON, not TOML
-- Use specific container tags (e.g., `osquery/osquery:5.12.1-ubuntu22.04`), never `:latest`
+- Use specific container tags (e.g., `osquery/osquery:5.17.0-ubuntu22.04`), never `:latest`
 - testcontainers exec needs `sh -c "..."` wrapper
 - SQLite: run SETUP separately from query to avoid invalid JSON output
 - `@@` prefix hides context lines (validate complete config, show only relevant portion)

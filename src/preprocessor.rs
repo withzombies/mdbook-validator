@@ -2,13 +2,16 @@
 //!
 //! Bridges the synchronous mdBook Preprocessor trait to async container validation.
 
+use std::collections::HashMap;
 use std::fmt::Write;
+use std::path::Path;
 
 use mdbook::book::{Book, BookItem, Chapter};
 use mdbook::errors::Error;
 use mdbook::preprocess::{Preprocessor, PreprocessorContext};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
+use crate::config::{Config, ValidatorConfig};
 use crate::container::ValidatorContainer;
 use crate::parser::{extract_markers, parse_info_string, ExtractedMarkers};
 use crate::transpiler::strip_markers;
@@ -35,14 +38,21 @@ impl Preprocessor for ValidatorPreprocessor {
         "validator"
     }
 
-    fn run(&self, _ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
+    fn run(&self, ctx: &PreprocessorContext, mut book: Book) -> Result<Book, Error> {
+        // Parse config from book.toml
+        let config = Config::from_context(ctx)
+            .map_err(|e| Error::msg(format!("Failed to parse config: {e}")))?;
+
         // Create tokio runtime for async->sync bridge
         let rt = tokio::runtime::Builder::new_current_thread()
             .enable_all()
             .build()
             .map_err(|e| Error::msg(format!("Failed to create tokio runtime: {e}")))?;
 
-        rt.block_on(async { self.run_async(&mut book).await })?;
+        rt.block_on(async {
+            self.run_async_with_config(&mut book, &config, &ctx.root)
+                .await
+        })?;
 
         Ok(book)
     }
@@ -59,6 +69,7 @@ impl ValidatorPreprocessor {
     /// Process a book for validation without a `PreprocessorContext`.
     ///
     /// This is useful for testing when you don't have access to create a context.
+    /// Uses a default validator that always passes.
     pub fn process_book(&self, book: Book) -> Result<Book, Error> {
         self.process_book_with_script(book, DEFAULT_VALIDATOR_SCRIPT)
     }
@@ -66,6 +77,7 @@ impl ValidatorPreprocessor {
     /// Process a book with a custom validator script.
     ///
     /// This is primarily for testing different validator behaviors.
+    /// Uses the default Alpine container with the provided script.
     pub fn process_book_with_script(
         &self,
         mut book: Book,
@@ -84,11 +96,47 @@ impl ValidatorPreprocessor {
         Ok(book)
     }
 
-    async fn run_async(&self, book: &mut Book) -> Result<(), Error> {
-        self.run_async_with_script(book, DEFAULT_VALIDATOR_SCRIPT)
-            .await
+    /// Process a book with explicit config (for testing).
+    ///
+    /// Allows testing with a custom config without needing a full `PreprocessorContext`.
+    pub fn process_book_with_config(
+        &self,
+        mut book: Book,
+        config: &Config,
+        book_root: &Path,
+    ) -> Result<Book, Error> {
+        let rt = tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_err(|e| Error::msg(format!("Failed to create tokio runtime: {e}")))?;
+
+        rt.block_on(async {
+            self.run_async_with_config(&mut book, config, book_root)
+                .await
+        })?;
+
+        Ok(book)
     }
 
+    /// Run with explicit config - starts per-validator containers.
+    async fn run_async_with_config(
+        &self,
+        book: &mut Book,
+        config: &Config,
+        book_root: &Path,
+    ) -> Result<(), Error> {
+        // Cache started containers by validator name
+        let mut containers: HashMap<String, ValidatorContainer> = HashMap::new();
+
+        for item in &mut book.sections {
+            self.process_book_item_with_config(item, config, book_root, &mut containers)
+                .await?;
+        }
+
+        Ok(())
+    }
+
+    /// Run with default script (for testing without config).
     async fn run_async_with_script(
         &self,
         book: &mut Book,
@@ -116,6 +164,28 @@ impl ValidatorPreprocessor {
             // Process sub-items recursively
             for sub_item in &mut chapter.sub_items {
                 Box::pin(self.process_book_item(sub_item, container)).await?;
+            }
+        }
+        Ok(())
+    }
+
+    async fn process_book_item_with_config(
+        &self,
+        item: &mut BookItem,
+        config: &Config,
+        book_root: &Path,
+        containers: &mut HashMap<String, ValidatorContainer>,
+    ) -> Result<(), Error> {
+        if let BookItem::Chapter(chapter) = item {
+            self.process_chapter_with_config(chapter, config, book_root, containers)
+                .await?;
+
+            // Process sub-items recursively
+            for sub_item in &mut chapter.sub_items {
+                Box::pin(
+                    self.process_book_item_with_config(sub_item, config, book_root, containers),
+                )
+                .await?;
             }
         }
         Ok(())
@@ -179,6 +249,142 @@ impl ValidatorPreprocessor {
         Ok(())
     }
 
+    async fn process_chapter_with_config(
+        &self,
+        chapter: &mut Chapter,
+        config: &Config,
+        book_root: &Path,
+        containers: &mut HashMap<String, ValidatorContainer>,
+    ) -> Result<(), Error> {
+        if chapter.content.is_empty() {
+            return Ok(());
+        }
+
+        // Collect all code blocks that need validation
+        let blocks = Self::find_validator_blocks(&chapter.content);
+
+        if blocks.is_empty() {
+            return Ok(());
+        }
+
+        // Validate each block using configured validator
+        for block in &blocks {
+            if block.skip {
+                continue;
+            }
+
+            // Get or start container for this validator
+            let container = self
+                .get_or_start_container(&block.validator_name, config, book_root, containers)
+                .await?;
+
+            let result = container
+                .exec_with_env(
+                    block.markers.setup.as_deref(),
+                    &block.markers.visible_content,
+                    block.markers.assertions.as_deref(),
+                    block.markers.expect.as_deref(),
+                )
+                .await
+                .map_err(|e| {
+                    Error::msg(format!(
+                        "Validation exec failed in '{}' for validator '{}': {}",
+                        chapter.name, block.validator_name, e
+                    ))
+                })?;
+
+            if result.exit_code != 0 {
+                let mut error_msg = format!(
+                    "Validation failed in '{}' (validator: {}, exit code {}):\n\nCode:\n{}\n",
+                    chapter.name,
+                    block.validator_name,
+                    result.exit_code,
+                    block.markers.visible_content
+                );
+                if !result.stderr.is_empty() {
+                    let _ = write!(error_msg, "\nValidator stderr:\n{}", result.stderr);
+                }
+                if !result.stdout.is_empty() {
+                    let _ = write!(error_msg, "\nValidator stdout:\n{}", result.stdout);
+                }
+                return Err(Error::msg(error_msg));
+            }
+        }
+
+        // All validations passed - strip markers from chapter content
+        chapter.content = Self::strip_markers_from_chapter(&chapter.content);
+
+        Ok(())
+    }
+
+    /// Get an existing container or start a new one for the given validator.
+    async fn get_or_start_container<'a>(
+        &self,
+        validator_name: &str,
+        config: &Config,
+        book_root: &Path,
+        containers: &'a mut HashMap<String, ValidatorContainer>,
+    ) -> Result<&'a ValidatorContainer, Error> {
+        // Check if we already have this container running
+        if containers.contains_key(validator_name) {
+            // Safe because we just checked contains_key
+            return Ok(containers
+                .get(validator_name)
+                .unwrap_or_else(|| unreachable!()));
+        }
+
+        // Look up validator config
+        let validator_config = config
+            .get_validator(validator_name)
+            .map_err(|e| Error::msg(format!("Unknown validator '{validator_name}': {e}")))?;
+
+        // Validate config values
+        validator_config.validate().map_err(|e| {
+            Error::msg(format!(
+                "Invalid validator config for '{validator_name}': {e}"
+            ))
+        })?;
+
+        // Start the container
+        let container = self
+            .start_validator_container(validator_config, book_root)
+            .await?;
+
+        containers.insert(validator_name.to_owned(), container);
+
+        // Safe because we just inserted
+        Ok(containers
+            .get(validator_name)
+            .unwrap_or_else(|| unreachable!()))
+    }
+
+    /// Start a container for the given validator config.
+    async fn start_validator_container(
+        &self,
+        config: &ValidatorConfig,
+        book_root: &Path,
+    ) -> Result<ValidatorContainer, Error> {
+        // Load script from configured path (relative to book root)
+        let script_path = book_root.join(&config.script);
+        let script_content = std::fs::read(&script_path).map_err(|e| {
+            Error::msg(format!(
+                "Failed to read validator script '{}': {}",
+                script_path.display(),
+                e
+            ))
+        })?;
+
+        // Start container with configured image
+        ValidatorContainer::start_with_image(&config.container, &script_content)
+            .await
+            .map_err(|e| {
+                Error::msg(format!(
+                    "Failed to start container '{}': {}",
+                    config.container, e
+                ))
+            })
+    }
+
     /// Find all code blocks with `validator=` attribute
     fn find_validator_blocks(content: &str) -> Vec<ValidatorBlock> {
         let mut blocks = Vec::new();
@@ -208,7 +414,11 @@ impl ValidatorPreprocessor {
                         // Handle empty validator= as "no validator"
                         if !validator_name.is_empty() {
                             let markers = extract_markers(&current_content);
-                            blocks.push(ValidatorBlock { markers, skip });
+                            blocks.push(ValidatorBlock {
+                                validator_name,
+                                markers,
+                                skip,
+                            });
                         }
                     }
                 }
@@ -289,6 +499,10 @@ impl ValidatorPreprocessor {
 
 /// A code block that requires validation
 struct ValidatorBlock {
+    /// Name of the validator (e.g., "osquery", "sqlite")
+    validator_name: String,
+    /// Extracted markers from the code block
     markers: ExtractedMarkers,
+    /// Whether to skip validation
     skip: bool,
 }

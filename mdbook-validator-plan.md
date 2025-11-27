@@ -187,7 +187,7 @@ num_workers = 0
   - `tokio` - async runtime (required for bollard)
   - `futures-util` - stream utilities for exec output
 - **Containers** (specific tags, NOT :latest or :stable):
-  - `osquery/osquery:5.12.1-ubuntu22.04` - osquery SQL and config validation
+  - `osquery/osquery:5.17.0-ubuntu22.04` - osquery SQL and config validation
   - `python:3.12-slim-bookworm` - pyproject.toml validation (with validate-pyproject pre-installed)
   - `koalaman/shellcheck-alpine:v0.10.0` - shell script static analysis (Alpine variant has shell)
   - `ubuntu:22.04` - shell script execution with assertions
@@ -437,7 +437,7 @@ Bake validators into custom Docker images:
 
 ```dockerfile
 # Dockerfile.osquery-validator
-FROM osquery/osquery:5.12.1-ubuntu22.04
+FROM osquery/osquery:5.17.0-ubuntu22.04
 RUN apt-get update && apt-get install -y jq && rm -rf /var/lib/apt/lists/*
 COPY validators/validate-osquery.sh /validate.sh
 RUN chmod +x /validate.sh
@@ -459,7 +459,7 @@ Each validator requires `jq` for JSON parsing. Dependency availability by base i
 
 | Base Image | Has bash | Has jq | Notes |
 |------------|----------|--------|-------|
-| osquery/osquery:5.12.1-ubuntu22.04 | ✅ | ❌ Install needed | Use Strategy 3 or install at runtime |
+| osquery/osquery:5.17.0-ubuntu22.04 | ✅ | ❌ Install needed | Use Strategy 3 or install at runtime |
 | keinos/sqlite3:3.47.2 | ✅ | ❌ | Alpine-based, use `apk add jq` |
 | koalaman/shellcheck-alpine:stable | ✅ ash | ❌ | Use `apk add jq` |
 | python:3.12-slim-bookworm | ✅ | ❌ | Use `apt-get install jq` |
@@ -1114,12 +1114,12 @@ default-timeout-secs = 30  # Default timeout for all validators
 
 # Validators - use specific tags, NOT :latest
 [preprocessor.validator.validators.osquery]
-container = "osquery/osquery:5.12.1-ubuntu22.04"
+container = "osquery/osquery:5.17.0-ubuntu22.04"
 validate-command = "/validators/validate-osquery.sh"
 timeout-secs = 60  # Override: osquery startup is slow
 
 [preprocessor.validator.validators.osquery-config]
-container = "osquery/osquery:5.12.1-ubuntu22.04"
+container = "osquery/osquery:5.17.0-ubuntu22.04"
 validate-command = "/validators/validate-osquery-config.sh"
 
 [preprocessor.validator.validators.sqlite]
@@ -2082,7 +2082,7 @@ Key design decisions:
 8. **Three block markers**: SETUP, ASSERT, EXPECT - SETUP is validator-interpreted
 9. **`@@` line prefix** - Hide context lines while validating complete content
 10. **osquery configs are JSON** - NOT TOML (osquery requires JSON)
-11. **Specific container tags** - No `:latest` or `:stable` (e.g., `osquery/osquery:5.12.1-ubuntu22.04`)
+11. **Specific container tags** - No `:latest` or `:stable` (e.g., `osquery/osquery:5.17.0-ubuntu22.04`)
 12. **ShellCheck container** - Must use Alpine variant with pinned version (scratch image has no shell)
 13. **SQLite** - Run SETUP separately from query to avoid invalid JSON
 14. **Async/sync bridging** - Use `Builder::new_current_thread()` to avoid nested runtime panics

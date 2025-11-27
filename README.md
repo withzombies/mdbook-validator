@@ -220,12 +220,12 @@ validate-command = "/validators/validate-sqlite.sh"
 
 # osquery SQL validator
 [preprocessor.validator.validators.osquery]
-container = "osquery/osquery:5.12.1-ubuntu22.04"
+container = "osquery/osquery:5.17.0-ubuntu22.04"
 validate-command = "/validators/validate-osquery.sh"
 
 # osquery config validator (JSON, not TOML!)
 [preprocessor.validator.validators.osquery-config]
-container = "osquery/osquery:5.12.1-ubuntu22.04"
+container = "osquery/osquery:5.17.0-ubuntu22.04"
 validate-command = "/validators/validate-osquery-config.sh"
 
 # ShellCheck static analysis

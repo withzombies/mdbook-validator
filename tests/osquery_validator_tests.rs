@@ -138,3 +138,64 @@ async fn test_osquery_empty_content_fails() {
         stderr
     );
 }
+
+/// Test: SQL syntax error fails with clear error message
+#[tokio::test]
+async fn test_osquery_syntax_error_fails() {
+    // "SELEC" is a typo - should be "SELECT"
+    let (exit_code, _, stderr) = run_osquery_validator("SELEC * FROM users;", None, None).await;
+    assert_ne!(exit_code, 0, "syntax error should fail");
+    assert!(
+        stderr.to_lowercase().contains("error")
+            || stderr.to_lowercase().contains("syntax")
+            || stderr.contains("Query failed"),
+        "stderr should contain error message: {}",
+        stderr
+    );
+}
+
+/// Test: rows = N assertion fails when count doesn't match exactly
+#[tokio::test]
+async fn test_osquery_rows_equals_assertion_fails() {
+    // Query returns 1 row (root user), but we assert rows = 5
+    let (exit_code, _, stderr) = run_osquery_validator(
+        "SELECT uid FROM users WHERE uid = 0;",
+        Some("rows = 5"),
+        None,
+    )
+    .await;
+    assert_ne!(exit_code, 0, "should fail - got 1 row, expected 5");
+    assert!(
+        stderr.contains("Assertion failed"),
+        "stderr should mention assertion failure: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("rows = 5"),
+        "stderr should show expected value: {}",
+        stderr
+    );
+}
+
+/// Test: rows > N assertion fails when count is not greater
+#[tokio::test]
+async fn test_osquery_rows_greater_than_assertion_fails() {
+    // Query returns 1 row (root user), but we assert rows > 5
+    let (exit_code, _, stderr) = run_osquery_validator(
+        "SELECT uid FROM users WHERE uid = 0;",
+        Some("rows > 5"),
+        None,
+    )
+    .await;
+    assert_ne!(exit_code, 0, "should fail - got 1 row, need more than 5");
+    assert!(
+        stderr.contains("Assertion failed"),
+        "stderr should mention assertion failure: {}",
+        stderr
+    );
+    assert!(
+        stderr.contains("rows > 5"),
+        "stderr should show expected value: {}",
+        stderr
+    );
+}
