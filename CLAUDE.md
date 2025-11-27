@@ -34,9 +34,11 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
 2. During `mdbook build`, the preprocessor:
    - Parses markdown looking for blocks with `validator=` attribute
    - Extracts visible content, setup blocks, assertions, and expected output
-   - Spins up specified container via testcontainers-rs
-   - Runs validator script via `sh -c "..."` wrapper with structured JSON: `{setup, content, assertions, expect}`
-   - Validator interprets SETUP appropriately (SQL for sqlite, bash for others)
+   - Spins up specified container via testcontainers-rs (container provides tool only)
+   - Runs setup SQL in container (if any)
+   - Runs query in container → captures JSON output
+   - Runs validator script on HOST with JSON stdin (jq available for parsing)
+   - Validator checks assertions against JSON output
    - Fails build if execution fails OR assertions don't match
    - Strips all markers and returns only visible content to mdBook
 
@@ -49,7 +51,7 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
 
 - **Rust 2021** - preprocessor is a Rust binary
 - **mdbook** - preprocessor interface
-- **testcontainers-rs** - manages Docker containers (blocking feature)
+- **testcontainers-rs** - manages Docker containers (async, with bollard for exec)
 - **pulldown-cmark** - parses markdown
 - **pulldown-cmark-to-cmark** - reconstructs markdown after modification
 - **Containers** (specific tags, NOT :latest):
@@ -78,16 +80,16 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
 
 ## Key Design Decisions
 
-1. **External validator scripts** - Flexibility over embedding validators in binary
-2. **Container-first** - Reproducible, isolated validation environments
+1. **Host-based validation** - Validators run on HOST (not in containers), enabling jq for JSON parsing
+2. **Container-first for tools** - Containers provide reproducible tool environments (sqlite3, osqueryi)
 3. **Opt-in validation** - Only validate blocks with `validator=` attribute
 4. **Fail-fast** - Stop build immediately on first error (configurable)
-5. **Structured input** - Validators receive JSON: `{setup, content, assertions, expect}`
+5. **JSON-based data flow** - Query runs in container with -json flag, output piped to host validator
 6. **Transpilation approach** - Validate with setup/assertions, render without them
 7. **Three marker system** - `<!--SETUP-->` + `<!--ASSERT-->` + `<!--EXPECT-->`
-8. **SETUP is validator-interpreted** - SQLite treats as SQL; bash-exec treats as shell commands
+8. **SETUP runs in container** - Setup SQL executes before query to prepare test data
 9. **Inline setup only (v1)** - No reusable setup blocks from book.toml
-10. **Shell wrapper required** - `sh -c "..."` for all container exec (testcontainers limitation)
+10. **Host validators use jq** - Simpler than installing jq in each container image
 11. **Specific container tags** - Never use `:latest`
 12. **osquery config is JSON** - NOT TOML (osquery requires JSON)
 
@@ -134,39 +136,55 @@ enabled = true
 
 ## Architecture Quick Reference
 
+**Host-based validation**: Containers run tools (sqlite3, osqueryi), validators run on HOST with jq.
+
 ```
 Markdown → Parser → Extract blocks with validator= attribute →
 Extract block markers: <!--SETUP-->, <!--ASSERT-->, <!--EXPECT--> →
 Process @@ lines: strip prefix, mark for removal from output →
-Start container →
-  1. Run SETUP (validator interprets appropriately)
-  2. Run content (visible lines + @@ lines with prefix stripped)
-  3. Validate output against ASSERT/EXPECT →
+Start container (tool only, no scripts injected) →
+  1. Run SETUP in container (e.g., sqlite3 /tmp/db "CREATE TABLE...")
+  2. Run query in container → get JSON output (e.g., sqlite3 -json /tmp/db "SELECT...")
+  3. Run validator on HOST with JSON stdin (jq available!)
+     - Validator checks assertions against JSON output
+     - Validator checks EXPECT for exact match
 Exit 0? → Strip markers and @@ lines → Return clean content to mdBook
 Exit non-0? → Fail build with error
+```
+
+**Data flow:**
+```
+SETUP SQL → container (sqlite3) → (no output needed)
+QUERY SQL → container (sqlite3 -json) → JSON stdout
+                ↓
+         HOST validator.sh (stdin = JSON)
+                ↓
+         jq parses JSON, checks rows/columns/contains
+                ↓
+         exit 0 = pass, exit non-0 = fail
 ```
 
 ## File Organization
 
 ```
 src/
-  main.rs          - CLI entry point, mdBook integration
-  lib.rs           - Public API
-  preprocessor.rs  - Main preprocessor logic (implements Preprocessor trait)
-  parser.rs        - Markdown parsing, extract code blocks + markers
-  transpiler.rs    - Strip markers from validated blocks for final output
-  validator.rs     - Orchestrates validation
-  container.rs     - Container lifecycle (start, exec, cleanup)
-  config.rs        - Parse book.toml configuration
+  main.rs           - CLI entry point, mdBook integration
+  lib.rs            - Public API
+  preprocessor.rs   - Main preprocessor logic (implements Preprocessor trait)
+  parser.rs         - Markdown parsing, extract code blocks + markers
+  transpiler.rs     - Strip markers from validated blocks for final output
+  container.rs      - Container lifecycle (start_raw, exec_raw for tool execution)
+  host_validator.rs - Host-side validator execution (spawns validator scripts locally with JSON stdin)
+  config.rs         - Parse book.toml configuration
 
 tests/
   integration_tests.rs - Full preprocessor tests
   fixtures/            - Test books and validators
 
 validators/
-  validate-osquery.sh        - osquery SQL validator
-  validate-osquery-config.sh - osquery JSON config validator
-  validate-sqlite.sh         - SQLite validator with setup support
+  validate-osquery.sh        - osquery SQL validator (runs on HOST, uses jq)
+  validate-osquery-config.sh - osquery JSON config validator (runs on HOST)
+  validate-sqlite.sh         - SQLite validator (runs on HOST, uses jq for assertions)
 ```
 
 ## Code Block Annotation Syntax
@@ -255,35 +273,48 @@ SELECT id FROM test ORDER BY id
 ```
 ````
 
-## Validator Script Contract
+## Validator Script Contract (Host-Based)
 
-**Input**: Structured JSON via stdin
-```json
-{
-  "setup": "CREATE TABLE test (id INTEGER);\nINSERT INTO test VALUES (1);",
-  "content": "SELECT * FROM test;",
-  "assertions": "rows >= 1",
-  "expect": null
-}
-```
+Validators run on HOST, not in containers. They receive query output and check assertions.
 
-**Execution order in validator:**
-1. Run `setup` content (validator interprets appropriately)
-2. Execute `content` (the visible query)
-3. Validate output against `assertions` and/or `expect`
+**Input:**
+- **stdin**: JSON output from container query (e.g., `[{"id": 1}, {"id": 2}]`)
+- **VALIDATOR_ASSERTIONS** env var: Assertion rules (e.g., `rows >= 1\ncontains "test"`)
+- **VALIDATOR_EXPECT** env var: Expected output for exact matching (optional)
 
-**Output**: Exit 0 = pass, non-zero = fail
-**Error reporting**: Write to stderr
+**Output:** Exit 0 = pass, non-zero = fail
+**Error reporting:** Write to stderr
 
-**SQLite validator approach** (solves multiple-SELECT JSON issue):
+**Example validator script (validate-sqlite.sh):**
 ```bash
-# Run setup SQL separately (no JSON output needed)
-if [ -n "$SETUP" ]; then
-    echo "$SETUP" | sqlite3 "$DB_FILE"
+#!/bin/bash
+# Reads JSON from stdin, checks assertions using jq
+
+JSON_INPUT=$(cat)
+ROW_COUNT=$(echo "$JSON_INPUT" | jq 'length')
+
+# Check row assertions
+if [[ "$VALIDATOR_ASSERTIONS" == *"rows >= "* ]]; then
+    EXPECTED=$(echo "$VALIDATOR_ASSERTIONS" | grep -oP 'rows >= \K\d+')
+    if [ "$ROW_COUNT" -lt "$EXPECTED" ]; then
+        echo "Assertion failed: rows >= $EXPECTED (got $ROW_COUNT)" >&2
+        exit 1
+    fi
 fi
-# Run query and capture JSON output
-OUTPUT=$(echo "$CONTENT" | sqlite3 -json "$DB_FILE")
+
+# Check contains assertions
+if [[ "$VALIDATOR_ASSERTIONS" == *"contains "* ]]; then
+    NEEDLE=$(echo "$VALIDATOR_ASSERTIONS" | grep -oP 'contains "\K[^"]+')
+    if ! echo "$JSON_INPUT" | jq -e --arg s "$NEEDLE" 'any(.. | strings; contains($s))' > /dev/null; then
+        echo "Assertion failed: contains \"$NEEDLE\"" >&2
+        exit 1
+    fi
+fi
+
+exit 0
 ```
+
+**Key design:** Validators don't run queries - they only validate JSON output from container. This separation keeps validators simple and portable.
 
 ## Configuration (book.toml)
 
@@ -293,18 +324,32 @@ command = "mdbook-validator"
 fail-fast = true
 
 # Validators - use specific tags, NOT :latest
+# Note: Validators run on HOST, containers only provide tools
+
 [preprocessor.validator.validators.osquery]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
-validate-command = "/validators/validate-osquery.sh"
+script = "validators/validate-osquery.sh"  # Runs on HOST
+# Optional: Override default commands
+# setup_command = "osqueryi"
+# query_command = "osqueryi --json"
 
 [preprocessor.validator.validators.osquery-config]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
-validate-command = "/validators/validate-osquery-config.sh"
+script = "validators/validate-osquery-config.sh"
 
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
-validate-command = "/validators/validate-sqlite.sh"
+script = "validators/validate-sqlite.sh"  # Runs on HOST with jq
+# Optional: Override default commands (defaults shown)
+# setup_command = "sqlite3 /tmp/test.db"
+# query_command = "sqlite3 -json /tmp/test.db"
 ```
+
+**Config fields:**
+- `container` - Docker image for tool execution (sqlite3, osqueryi)
+- `script` - Path to validator script (runs on HOST, receives JSON stdin)
+- `setup_command` - Optional: Command to run SETUP SQL in container
+- `query_command` - Optional: Command to run query in container (should output JSON)
 
 ## Current Tasks
 
@@ -406,11 +451,32 @@ Parse code block content looking for marker types:
 5. For validation: create JSON with `{setup, content, assertions, expect}`
 6. For output: return only visible content
 
-### Container Execution
-**Critical**: testcontainers-rs `exec()` doesn't support shell piping. All validator invocations must use:
+### Container Execution (Host-Based Architecture)
+
+Containers only run tools (sqlite3, osqueryi). Validators run on HOST.
+
+**Container API (exec_raw):**
 ```rust
-container.exec(ExecCommand::new(["sh", "-c", "cat /tmp/input.json | /validators/validate-osquery.sh"]))
+// Run setup in container
+container.exec_raw(&["sh", "-c", "sqlite3 /tmp/test.db \"CREATE TABLE test (id INT)\""]).await?;
+
+// Run query in container, get JSON output
+let result = container.exec_raw(&["sh", "-c", "sqlite3 -json /tmp/test.db \"SELECT * FROM test\""]).await?;
+let json_output = result.stdout;  // JSON from query
 ```
+
+**Host validation (host_validator::run_validator):**
+```rust
+// Validate JSON output on host (jq available!)
+let validation_result = host_validator::run_validator(
+    "validators/validate-sqlite.sh",  // script path
+    &json_output,                      // JSON stdin
+    Some("rows >= 1"),                 // assertions (env var)
+    None,                              // expected output (env var)
+)?;
+```
+
+**Why host-based?** Installing jq in each container is complex. Running validators on host means jq is always available.
 
 ### Transpilation Process
 1. Parse markdown
@@ -589,18 +655,19 @@ Build an mdBook preprocessor in Rust that:
 1. Parses markdown for blocks with `validator=` attribute (e.g., ` ```sql validator=osquery`)
 2. Extracts block markers: `<!--SETUP-->`, `<!--ASSERT-->`, `<!--EXPECT-->`
 3. Processes `@@` line prefix: hidden context lines sent to validator but stripped from output
-4. Spins up Docker containers via testcontainers (blocking feature)
-5. Runs validator scripts via `sh -c "..."` with structured JSON: `{setup, content, assertions, expect}`
-6. Validators run code AND validate output (assertions + exact matching)
-7. Strips all markers and `@@` lines from output on success, fails build on validation/assertion error
+4. Spins up Docker containers via testcontainers (container provides tool only)
+5. Runs SETUP in container (e.g., `sqlite3 /tmp/db "CREATE TABLE..."`)
+6. Runs query in container → captures JSON output (e.g., `sqlite3 -json /tmp/db "SELECT..."`)
+7. Runs validator script on HOST with JSON stdin (jq available for parsing!)
+8. Strips all markers and `@@` lines from output on success, fails build on validation/assertion error
 
-**Key insight**: Acts as validator + transpiler + regression tester. Validates execution AND output, renders clean examples.
+**Key insight**: Host-based validation. Containers run tools, validators run on host with jq.
 
 **Critical details**:
 - osquery config is JSON, not TOML
 - Use specific container tags (e.g., `osquery/osquery:5.17.0-ubuntu22.04`), never `:latest`
-- testcontainers exec needs `sh -c "..."` wrapper
-- SQLite: run SETUP separately from query to avoid invalid JSON output
+- Containers only run tools - no validator scripts copied into containers
+- Validators run on HOST via `host_validator::run_validator()` with JSON stdin
 - `@@` prefix hides context lines (validate complete config, show only relevant portion)
 
 Target: osquery SQL/JSON config validation. Make documentation examples impossible to break AND guarantee correct output.
