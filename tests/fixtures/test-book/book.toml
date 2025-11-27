@@ -8,3 +8,7 @@ command = "mdbook-validator"
 [preprocessor.validator.validators.osquery]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
 script = "validators/validate-osquery.sh"
+
+[preprocessor.validator.validators.sqlite]
+container = "keinos/sqlite3:3.47.2"
+script = "validators/validate-sqlite.sh"
