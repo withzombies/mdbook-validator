@@ -1,7 +1,13 @@
 //! Integration tests for mdbook-validator
 //!
 //! Tests are allowed to panic for assertions and test failure.
-#![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+#![allow(
+    clippy::panic,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::str_to_string
+)]
 
 use mdbook::book::{Book, BookItem, Chapter};
 use mdbook::preprocess::Preprocessor;

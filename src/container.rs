@@ -25,7 +25,8 @@ pub struct ValidationResult {
 /// Starts an Alpine container with a validator script copied in,
 /// then executes the script with environment variables for validation data.
 pub struct ValidatorContainer {
-    container: ContainerAsync<GenericImage>,
+    /// Kept alive to prevent container cleanup (testcontainers drops on Drop)
+    _container: ContainerAsync<GenericImage>,
     container_id: String,
 }
 
@@ -46,9 +47,9 @@ impl ValidatorContainer {
             .await
             .context("Failed to start container. Is Docker running?")?;
 
-        let container_id = container.id().to_string();
+        let container_id = container.id().to_owned();
         Ok(Self {
-            container,
+            _container: container,
             container_id,
         })
     }
@@ -93,7 +94,7 @@ impl ValidatorContainer {
                     attach_stdout: Some(true),
                     attach_stderr: Some(true),
                     env: Some(env_vars),
-                    cmd: Some(vec!["sh".to_string(), "/validate.sh".to_string()]),
+                    cmd: Some(vec!["sh".to_owned(), "/validate.sh".to_owned()]),
                     ..Default::default()
                 },
             )
@@ -148,14 +149,5 @@ impl ValidatorContainer {
     #[must_use]
     pub fn id(&self) -> &str {
         &self.container_id
-    }
-}
-
-// Note: Container cleanup is automatic via testcontainers Drop impl
-impl Drop for ValidatorContainer {
-    fn drop(&mut self) {
-        // testcontainers handles cleanup automatically
-        // Log only if needed for debugging
-        let _ = &self.container;
     }
 }

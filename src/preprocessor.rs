@@ -126,12 +126,12 @@ impl ValidatorPreprocessor {
         chapter: &mut Chapter,
         container: &ValidatorContainer,
     ) -> Result<(), Error> {
-        let Some(ref content) = chapter.content.clone().into() else {
+        if chapter.content.is_empty() {
             return Ok(());
-        };
+        }
 
         // Collect all code blocks that need validation
-        let blocks = Self::find_validator_blocks(content);
+        let blocks = Self::find_validator_blocks(&chapter.content);
 
         if blocks.is_empty() {
             return Ok(());
@@ -174,7 +174,7 @@ impl ValidatorPreprocessor {
         }
 
         // All validations passed - strip markers from chapter content
-        chapter.content = Self::strip_markers_from_chapter(content);
+        chapter.content = Self::strip_markers_from_chapter(&chapter.content);
 
         Ok(())
     }
@@ -283,7 +283,7 @@ impl ValidatorPreprocessor {
             }
         }
 
-        result.trim().to_string()
+        result.trim().to_owned()
     }
 }
 

@@ -13,11 +13,11 @@
 pub fn parse_info_string(info: &str) -> (String, Option<String>, bool) {
     let parts: Vec<&str> = info.split_whitespace().collect();
 
-    let language = parts.first().map_or(String::new(), |s| (*s).to_string());
+    let language = parts.first().map_or(String::new(), |s| (*s).to_owned());
 
     let validator = parts
         .iter()
-        .find_map(|part| part.strip_prefix("validator=").map(ToString::to_string))
+        .find_map(|part| part.strip_prefix("validator=").map(ToOwned::to_owned))
         .filter(|v| !v.is_empty());
 
     let skip = parts.contains(&"skip");
@@ -45,7 +45,7 @@ pub struct ExtractedMarkers {
 #[must_use]
 pub fn extract_markers(content: &str) -> ExtractedMarkers {
     let mut result = ExtractedMarkers::default();
-    let mut remaining = content.to_string();
+    let mut remaining = content.to_owned();
 
     // Extract SETUP block
     if let Some((before, inner, after)) = extract_marker_block(&remaining, "<!--SETUP") {
@@ -66,7 +66,7 @@ pub fn extract_markers(content: &str) -> ExtractedMarkers {
     }
 
     // Trim leading/trailing whitespace from visible content
-    result.visible_content = remaining.trim().to_string();
+    remaining.trim().clone_into(&mut result.visible_content);
 
     result
 }
@@ -84,24 +84,5 @@ fn extract_marker_block(content: &str, marker: &str) -> Option<(String, String, 
     let inner = content[marker_end..end].trim();
     let after = &content[end + 3..]; // Skip "-->"
 
-    Some((before.to_string(), inner.to_string(), after.to_string()))
-}
-
-/// A code block extracted from markdown
-#[derive(Debug, Clone)]
-pub struct CodeBlock {
-    /// The language (e.g., "sql", "json")
-    pub language: String,
-    /// The validator name from `validator=` attribute
-    pub validator: Option<String>,
-    /// Whether to skip validation
-    pub skip: bool,
-    /// The visible content (without markers)
-    pub content: String,
-    /// Setup content from <!--SETUP--> marker
-    pub setup: Option<String>,
-    /// Assertions from <!--ASSERT--> marker
-    pub assertions: Option<String>,
-    /// Expected output from <!--EXPECT--> marker
-    pub expect: Option<String>,
+    Some((before.to_owned(), inner.to_owned(), after.to_owned()))
 }

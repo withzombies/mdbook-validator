@@ -9,7 +9,7 @@
 /// - Lines starting with `@@` prefix
 #[must_use]
 pub fn strip_markers(content: &str) -> String {
-    let mut result = content.to_string();
+    let mut result = content.to_owned();
 
     // Strip <!--SETUP ... --> blocks
     result = strip_marker_block(&result, "<!--SETUP");
@@ -35,7 +35,7 @@ fn strip_double_at_lines(content: &str) -> String {
 }
 
 fn strip_marker_block(content: &str, marker: &str) -> String {
-    let mut result = content.to_string();
+    let mut result = content.to_owned();
 
     while let Some(start) = result.find(marker) {
         if let Some(end_offset) = result[start..].find("-->") {

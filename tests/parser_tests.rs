@@ -1,4 +1,5 @@
 //! Tests for markdown parsing and code block extraction
+#![allow(clippy::str_to_string)]
 
 use mdbook_validator::parser::{extract_markers, parse_info_string};
 

@@ -1,5 +1,14 @@
-// Tests are allowed to panic for assertions and test failure
-#![allow(clippy::panic, clippy::expect_used, clippy::unwrap_used)]
+//! Prototype tests for container + bollard integration
+//!
+//! Tests are allowed to panic for assertions and test failure.
+#![allow(
+    clippy::panic,
+    clippy::expect_used,
+    clippy::unwrap_used,
+    clippy::print_stdout,
+    clippy::print_stderr,
+    clippy::str_to_string
+)]
 
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
