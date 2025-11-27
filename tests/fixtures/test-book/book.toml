@@ -4,3 +4,7 @@ authors = ["Test"]
 
 [preprocessor.validator]
 command = "mdbook-validator"
+
+[preprocessor.validator.validators.osquery]
+container = "osquery/osquery:5.17.0-ubuntu22.04"
+script = "validators/validate-osquery.sh"
