@@ -324,24 +324,23 @@ impl ValidatorPreprocessor {
             )));
         }
 
-        // Get setup and query commands (use defaults if not configured)
-        let (setup_cmd, query_cmd) =
-            Self::get_validator_commands(&block.validator_name, validator_config);
+        // Get query command (use defaults if not configured)
+        let query_cmd = Self::get_query_command(&block.validator_name, validator_config);
 
-        // 1. Run setup in container (if any)
+        // 1. Run setup script in container (if any)
+        // SETUP content IS the shell command - run directly via sh -c
         if let Some(setup) = &block.markers.setup {
-            let setup_sql = setup.trim();
-            if !setup_sql.is_empty() {
-                let cmd = format!("{setup_cmd} \"{setup_sql}\"");
+            let setup_script = setup.trim();
+            if !setup_script.is_empty() {
                 let setup_result = container
-                    .exec_raw(&["sh", "-c", &cmd])
+                    .exec_raw(&["sh", "-c", setup_script])
                     .await
                     .map_err(|e| Error::msg(format!("Setup exec failed: {e}")))?;
 
                 if setup_result.exit_code != 0 {
                     return Err(Error::msg(format!(
-                        "Setup failed in '{}' (validator: {}):\n\nSetup SQL:\n{}\n\nError:\n{}",
-                        chapter_name, block.validator_name, setup_sql, setup_result.stderr
+                        "Setup script failed in '{}' (validator: {}):\n\nScript:\n{}\n\nError:\n{}",
+                        chapter_name, block.validator_name, setup_script, setup_result.stderr
                     )));
                 }
             }
@@ -416,29 +415,18 @@ impl ValidatorPreprocessor {
         Ok(())
     }
 
-    /// Get setup and query commands for a validator.
+    /// Get query command for a validator.
     ///
-    /// Uses configured commands if available, otherwise uses defaults based on validator name.
-    fn get_validator_commands(validator_name: &str, config: &ValidatorConfig) -> (String, String) {
-        let setup_cmd = config
-            .setup_command
-            .clone()
-            .unwrap_or_else(|| match validator_name {
-                "sqlite" => "sqlite3 /tmp/test.db".to_owned(),
-                "osquery" => "osqueryi".to_owned(),
-                _ => "sh -c".to_owned(),
-            });
-
-        let query_cmd = config
+    /// Uses configured command if available, otherwise uses defaults based on validator name.
+    fn get_query_command(validator_name: &str, config: &ValidatorConfig) -> String {
+        config
             .query_command
             .clone()
             .unwrap_or_else(|| match validator_name {
                 "sqlite" => "sqlite3 -json /tmp/test.db".to_owned(),
                 "osquery" => "osqueryi --json".to_owned(),
-                _ => "sh -c".to_owned(),
-            });
-
-        (setup_cmd, query_cmd)
+                _ => "cat".to_owned(),
+            })
     }
 
     /// Get an existing container or start a new one for the given validator.

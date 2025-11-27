@@ -454,7 +454,6 @@ fn preprocessor_uses_configured_osquery_validator() {
         ValidatorConfig {
             container: "osquery/osquery:5.17.0-ubuntu22.04".to_string(),
             script: PathBuf::from("validators/validate-osquery.sh"),
-            setup_command: None,
             query_command: None,
         },
     );
@@ -573,7 +572,6 @@ fn preprocessor_errors_for_missing_script() {
         ValidatorConfig {
             container: "alpine:3".to_string(),
             script: PathBuf::from("validators/does-not-exist.sh"),
-            setup_command: None,
             query_command: None,
         },
     );

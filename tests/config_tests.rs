@@ -143,7 +143,6 @@ fn validator_config_validate_errors_on_empty_container() {
     let config = ValidatorConfig {
         container: String::new(),
         script: PathBuf::from("test.sh"),
-        setup_command: None,
         query_command: None,
     };
 
@@ -161,7 +160,6 @@ fn validator_config_validate_errors_on_empty_script() {
     let config = ValidatorConfig {
         container: "alpine:3".to_owned(),
         script: PathBuf::new(),
-        setup_command: None,
         query_command: None,
     };
 
@@ -179,7 +177,6 @@ fn validator_config_validate_passes_for_valid_config() {
     let config = ValidatorConfig {
         container: "osquery/osquery:5.17.0-ubuntu22.04".to_owned(),
         script: PathBuf::from("validators/validate-osquery.sh"),
-        setup_command: None,
         query_command: None,
     };
 

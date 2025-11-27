@@ -15,10 +15,6 @@ pub struct ValidatorConfig {
     pub container: String,
     /// Path to validator script relative to book root
     pub script: PathBuf,
-    /// Command to run setup SQL in container (e.g., "sqlite3 /tmp/test.db")
-    /// If not set, defaults based on validator type
-    #[serde(default)]
-    pub setup_command: Option<String>,
     /// Command to run query with JSON output (e.g., "sqlite3 -json /tmp/test.db")
     /// If not set, defaults based on validator type
     #[serde(default)]

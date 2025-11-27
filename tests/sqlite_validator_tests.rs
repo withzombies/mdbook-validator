@@ -23,7 +23,7 @@ const VALIDATOR_SCRIPT: &str = "validators/validate-sqlite.sh";
 /// Helper to run `SQLite` query with host-based validation.
 ///
 /// 1. Starts container with sqlite3 (no script injection)
-/// 2. Runs setup SQL in container (if any)
+/// 2. Runs setup script in container (if any) - setup IS the shell command
 /// 3. Runs query SQL in container with -json flag
 /// 4. Validates JSON output on host using validator script
 async fn run_sqlite_validator(
@@ -36,13 +36,13 @@ async fn run_sqlite_validator(
         .await
         .expect("sqlite container should start");
 
-    // Run setup SQL in container (if any)
-    if let Some(setup_sql) = setup {
-        let setup_sql = setup_sql.trim();
-        if !setup_sql.is_empty() {
-            let cmd = format!("sqlite3 /tmp/test.db \"{}\"", setup_sql);
+    // Run setup script in container (if any)
+    // Setup content IS the shell command - run directly via sh -c
+    if let Some(setup_script) = setup {
+        let setup_script = setup_script.trim();
+        if !setup_script.is_empty() {
             let setup_result = container
-                .exec_raw(&["sh", "-c", &cmd])
+                .exec_raw(&["sh", "-c", setup_script])
                 .await
                 .expect("setup exec should succeed");
 
@@ -52,7 +52,7 @@ async fn run_sqlite_validator(
                 return (
                     setup_result.exit_code as i32,
                     setup_result.stdout,
-                    format!("Setup SQL failed: {}", setup_result.stderr),
+                    format!("Setup script failed: {}", setup_result.stderr),
                 );
             }
         }
@@ -115,10 +115,11 @@ async fn test_sqlite_valid_query_passes() {
     );
 }
 
-/// Test: SETUP SQL runs before CONTENT (CREATE TABLE + INSERT + SELECT)
+/// Test: SETUP script runs before CONTENT (CREATE TABLE + INSERT + SELECT)
 #[tokio::test]
 async fn test_sqlite_setup_and_query() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(42);";
+    // SETUP is now a full shell command
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(42);'";
     let (exit_code, stdout, _) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), None, None).await;
     assert_eq!(exit_code, 0, "query with setup should pass");
@@ -179,7 +180,7 @@ async fn test_sqlite_syntax_error_fails() {
 /// Test: rows = N assertion passes when row count matches exactly
 #[tokio::test]
 async fn test_sqlite_rows_equals_assertion_passes() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, _) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), Some("rows = 2"), None).await;
     assert_eq!(exit_code, 0, "rows = 2 should pass when 2 rows returned");
@@ -188,7 +189,7 @@ async fn test_sqlite_rows_equals_assertion_passes() {
 /// Test: rows = N assertion fails when row count doesn't match
 #[tokio::test]
 async fn test_sqlite_rows_equals_assertion_fails() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, stderr) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), Some("rows = 5"), None).await;
     assert_ne!(exit_code, 0, "rows = 5 should fail when 2 rows returned");
@@ -207,7 +208,7 @@ async fn test_sqlite_rows_equals_assertion_fails() {
 /// Test: rows >= N assertion passes when row count is at least N
 #[tokio::test]
 async fn test_sqlite_rows_gte_assertion_passes() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, _) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), Some("rows >= 1"), None).await;
     assert_eq!(exit_code, 0, "rows >= 1 should pass when 2 rows returned");
@@ -216,7 +217,7 @@ async fn test_sqlite_rows_gte_assertion_passes() {
 /// Test: rows >= N assertion fails when row count is less than N
 #[tokio::test]
 async fn test_sqlite_rows_gte_assertion_fails() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, stderr) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), Some("rows >= 10"), None).await;
     assert_ne!(exit_code, 0, "rows >= 10 should fail when 2 rows returned");
@@ -230,7 +231,7 @@ async fn test_sqlite_rows_gte_assertion_fails() {
 /// Test: rows > N assertion passes when row count is greater than N
 #[tokio::test]
 async fn test_sqlite_rows_gt_assertion_passes() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, _) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), Some("rows > 1"), None).await;
     assert_eq!(exit_code, 0, "rows > 1 should pass when 2 rows returned");
@@ -239,7 +240,7 @@ async fn test_sqlite_rows_gt_assertion_passes() {
 /// Test: rows > N assertion fails when row count is not greater than N
 #[tokio::test]
 async fn test_sqlite_rows_gt_assertion_fails() {
-    let setup = "CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(x INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, stderr) =
         run_sqlite_validator("SELECT * FROM t;", Some(setup), Some("rows > 5"), None).await;
     assert_ne!(exit_code, 0, "rows > 5 should fail when 2 rows returned");
@@ -258,7 +259,7 @@ async fn test_sqlite_rows_gt_assertion_fails() {
 /// Test: contains "string" assertion passes when string is in output
 #[tokio::test]
 async fn test_sqlite_contains_assertion_passes() {
-    let setup = "CREATE TABLE users(name TEXT); INSERT INTO users VALUES('alice'), ('bob');";
+    let setup = r#"sqlite3 /tmp/test.db "CREATE TABLE users(name TEXT); INSERT INTO users VALUES('alice'), ('bob');""#;
     let (exit_code, _, _) = run_sqlite_validator(
         "SELECT * FROM users;",
         Some(setup),
@@ -272,7 +273,7 @@ async fn test_sqlite_contains_assertion_passes() {
 /// Test: contains "string" assertion fails when string is not in output
 #[tokio::test]
 async fn test_sqlite_contains_assertion_fails() {
-    let setup = "CREATE TABLE users(name TEXT); INSERT INTO users VALUES('alice'), ('bob');";
+    let setup = r#"sqlite3 /tmp/test.db "CREATE TABLE users(name TEXT); INSERT INTO users VALUES('alice'), ('bob');""#;
     let (exit_code, _, stderr) = run_sqlite_validator(
         "SELECT * FROM users;",
         Some(setup),
@@ -296,7 +297,7 @@ async fn test_sqlite_contains_assertion_fails() {
 /// Test: `VALIDATOR_EXPECT` passes when output matches exactly
 #[tokio::test]
 async fn test_sqlite_expected_output_passes() {
-    let setup = "CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1), (2);'";
     // SQLite JSON output format: [{"id":1},{"id":2}]
     let (exit_code, _, _) = run_sqlite_validator(
         "SELECT id FROM t ORDER BY id;",
@@ -311,7 +312,7 @@ async fn test_sqlite_expected_output_passes() {
 /// Test: `VALIDATOR_EXPECT` fails when output doesn't match
 #[tokio::test]
 async fn test_sqlite_expected_output_fails() {
-    let setup = "CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1), (2);";
+    let setup = "sqlite3 /tmp/test.db 'CREATE TABLE t(id INTEGER); INSERT INTO t VALUES(1), (2);'";
     let (exit_code, _, stderr) = run_sqlite_validator(
         "SELECT id FROM t ORDER BY id;",
         Some(setup),
