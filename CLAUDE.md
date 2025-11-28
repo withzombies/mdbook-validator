@@ -336,8 +336,8 @@ fail-fast = true
 [preprocessor.validator.validators.osquery]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
 script = "validators/validate-osquery.sh"  # Runs on HOST
-# Optional: Override default query command
-# query_command = "osqueryi --json"
+# Optional: Override default exec command
+# exec_command = "osqueryi --json"
 
 [preprocessor.validator.validators.osquery-config]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
@@ -346,8 +346,8 @@ script = "validators/validate-osquery-config.sh"
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
 script = "validators/validate-sqlite.sh"  # Runs on HOST with jq
-# Optional: Override default query command (default shown)
-# query_command = "sqlite3 -json /tmp/test.db"
+# Optional: Override default exec command (default shown)
+# exec_command = "sqlite3 -json /tmp/test.db"
 ```
 
 **Config fields:**
@@ -355,7 +355,7 @@ script = "validators/validate-sqlite.sh"  # Runs on HOST with jq
 - `fixtures_dir` - Optional: Path to fixtures directory, mounted to /fixtures in containers
 - `container` - Docker image for tool execution (sqlite3, osqueryi)
 - `script` - Path to validator script (runs on HOST, receives JSON stdin)
-- `query_command` - Optional: Command to run query in container (should output JSON)
+- `exec_command` - Optional: Command to execute content in container (should output JSON)
 
 ## Current Tasks
 

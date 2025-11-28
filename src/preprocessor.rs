@@ -324,8 +324,8 @@ impl ValidatorPreprocessor {
             )));
         }
 
-        // Get query command (use defaults if not configured)
-        let query_cmd = Self::get_query_command(&block.validator_name, validator_config);
+        // Get exec command (use defaults if not configured)
+        let exec_cmd = Self::get_exec_command(&block.validator_name, validator_config);
 
         // 1. Run setup script in container (if any)
         // SETUP content IS the shell command - run directly via sh -c
@@ -355,7 +355,7 @@ impl ValidatorPreprocessor {
             )));
         }
 
-        let cmd = format!("{query_cmd} \"{query_sql}\"");
+        let cmd = format!("{exec_cmd} \"{query_sql}\"");
         let query_result = container
             .exec_raw(&["sh", "-c", &cmd])
             .await
@@ -415,12 +415,12 @@ impl ValidatorPreprocessor {
         Ok(())
     }
 
-    /// Get query command for a validator.
+    /// Get exec command for a validator.
     ///
     /// Uses configured command if available, otherwise uses defaults based on validator name.
-    fn get_query_command(validator_name: &str, config: &ValidatorConfig) -> String {
+    fn get_exec_command(validator_name: &str, config: &ValidatorConfig) -> String {
         config
-            .query_command
+            .exec_command
             .clone()
             .unwrap_or_else(|| match validator_name {
                 "sqlite" => "sqlite3 -json /tmp/test.db".to_owned(),
