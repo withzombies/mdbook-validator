@@ -28,10 +28,12 @@ fn preprocessor_supports_html_renderer() {
 }
 
 #[test]
-fn preprocessor_does_not_support_other_renderers() {
+fn preprocessor_supports_all_renderers() {
+    // We validate and strip markers, producing valid markdown for any output format
     let preprocessor = ValidatorPreprocessor::new();
-    assert!(!preprocessor.supports_renderer("pdf"));
-    assert!(!preprocessor.supports_renderer("epub"));
+    assert!(preprocessor.supports_renderer("pdf"));
+    assert!(preprocessor.supports_renderer("epub"));
+    assert!(preprocessor.supports_renderer("markdown"));
 }
 
 /// Creates a Book with a single chapter containing the given content

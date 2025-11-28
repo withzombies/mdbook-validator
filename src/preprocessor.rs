@@ -59,7 +59,10 @@ impl Preprocessor for ValidatorPreprocessor {
     }
 
     fn supports_renderer(&self, renderer: &str) -> bool {
-        renderer == "html"
+        // Support all renderers - we validate and strip markers,
+        // producing valid markdown for any output format
+        let _ = renderer;
+        true
     }
 }
 
