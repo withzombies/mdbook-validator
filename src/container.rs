@@ -259,13 +259,45 @@ impl ValidatorContainer {
     ///
     /// Returns error if Docker is not running or container fails to start.
     pub async fn start_raw(image: &str) -> Result<Self> {
+        Self::start_raw_with_mount(image, None).await
+    }
+
+    /// Start a container with an optional host directory mounted.
+    ///
+    /// This is for the new architecture where validators run on the host,
+    /// and containers only provide the tool (sqlite3, osquery, etc.).
+    ///
+    /// # Arguments
+    ///
+    /// * `image` - Docker image in "name:tag" format
+    /// * `mount` - Optional (`host_path`, `container_path`) tuple for bind mount
+    ///
+    /// # Errors
+    ///
+    /// Returns error if Docker is not running or container fails to start.
+    pub async fn start_raw_with_mount(
+        image: &str,
+        mount: Option<(&std::path::Path, &str)>,
+    ) -> Result<Self> {
+        use testcontainers::core::Mount;
+
         let (name, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
 
-        let container = GenericImage::new(name, tag)
-            .with_cmd(["sleep", "infinity"])
-            .start()
-            .await
-            .context("Failed to start container. Is Docker running?")?;
+        let base_image = GenericImage::new(name, tag).with_cmd(["sleep", "infinity"]);
+
+        let container = if let Some((host_path, container_path)) = mount {
+            let host_str = host_path.to_string_lossy().to_string();
+            base_image
+                .with_mount(Mount::bind_mount(host_str, container_path))
+                .start()
+                .await
+                .context("Failed to start container with mount. Is Docker running?")?
+        } else {
+            base_image
+                .start()
+                .await
+                .context("Failed to start container. Is Docker running?")?
+        };
 
         let container_id = container.id().to_owned();
         Ok(Self {

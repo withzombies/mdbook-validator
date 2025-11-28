@@ -30,6 +30,10 @@ pub struct Config {
     /// Stop on first validation failure (default: true)
     #[serde(default = "default_fail_fast")]
     pub fail_fast: bool,
+    /// Optional path to fixtures directory - mounted to /fixtures in containers.
+    /// Path must be absolute. Relative paths are resolved from book root.
+    #[serde(default)]
+    pub fixtures_dir: Option<PathBuf>,
 }
 
 const fn default_fail_fast() -> bool {

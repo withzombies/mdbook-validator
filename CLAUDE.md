@@ -20,8 +20,10 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
    ````markdown
    ```sql validator=sqlite
    <!--SETUP
+   sqlite3 /tmp/test.db << 'EOF'
    CREATE TABLE alerts (path TEXT, scanner TEXT);
    INSERT INTO alerts VALUES ('/data/test.json', 'scanner1');
+   EOF
    -->
    SELECT path FROM alerts WHERE path LIKE '%.json'
    <!--ASSERT
@@ -97,13 +99,13 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
 
 ### Block Markers (stripped from output)
 
-| Marker | Purpose | Validator Interpretation |
-|--------|---------|-------------------------|
-| `<!--SETUP-->` | Pre-query content | Validator-specific (SQL setup, bash commands, etc.) |
+| Marker | Purpose | How It Works |
+|--------|---------|--------------|
+| `<!--SETUP-->` | Shell command(s) to run before query | Content IS the shell command - runs via `sh -c` |
 | `<!--ASSERT-->` | Output validation rules | Row counts, contains, patterns |
 | `<!--EXPECT-->` | Exact output matching | JSON comparison for regression tests |
 
-**Design principle**: SETUP content meaning is validator-specific. The preprocessor just extracts it; the validator script decides what to do with it.
+**Design principle**: SETUP content IS the shell command - the preprocessor runs it directly via `sh -c "$SETUP_CONTENT"`. This unified approach works for any validator (sqlite3, osqueryi, etc.).
 
 ### Line Prefix: `@@` (hidden context lines)
 
@@ -231,12 +233,11 @@ contains "root"
 
 ### SQLite Examples (with setup)
 
-Inline setup (hidden from docs):
+Inline setup (hidden from docs) - SETUP content IS the shell command:
 ````markdown
 ```sql validator=sqlite
 <!--SETUP
-CREATE TABLE test (id INTEGER, name TEXT);
-INSERT INTO test VALUES (1, 'alice');
+sqlite3 /tmp/test.db 'CREATE TABLE test (id INTEGER, name TEXT); INSERT INTO test VALUES (1, "alice");'
 -->
 SELECT * FROM test WHERE id = 1;
 ```
@@ -244,12 +245,14 @@ SELECT * FROM test WHERE id = 1;
 
 Reader sees only: `SELECT * FROM test WHERE id = 1;`
 
-With assertions (validate output):
+Multi-line setup with heredoc (for complex schemas):
 ````markdown
 ```sql validator=sqlite
 <!--SETUP
+sqlite3 /tmp/test.db << 'EOF'
 CREATE TABLE test (id INTEGER);
 INSERT INTO test VALUES (1), (2), (3);
+EOF
 -->
 SELECT COUNT(*) as total FROM test
 <!--ASSERT
@@ -259,12 +262,11 @@ total = 3
 ```
 ````
 
-With expected output (exact match for regression testing):
+With fixtures directory (mount local files to /fixtures):
 ````markdown
 ```sql validator=sqlite
 <!--SETUP
-CREATE TABLE test (id INTEGER);
-INSERT INTO test VALUES (1), (2);
+sqlite3 /tmp/test.db < /fixtures/schema.sql
 -->
 SELECT id FROM test ORDER BY id
 <!--EXPECT
@@ -323,14 +325,18 @@ exit 0
 command = "mdbook-validator"
 fail-fast = true
 
+# Optional: Mount local fixtures directory to /fixtures in containers
+# Useful for loading schema files, test data, etc.
+# fixtures_dir = "fixtures"  # Relative to book root
+
 # Validators - use specific tags, NOT :latest
 # Note: Validators run on HOST, containers only provide tools
+# Note: SETUP content IS the shell command - runs via sh -c
 
 [preprocessor.validator.validators.osquery]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
 script = "validators/validate-osquery.sh"  # Runs on HOST
-# Optional: Override default commands
-# setup_command = "osqueryi"
+# Optional: Override default query command
 # query_command = "osqueryi --json"
 
 [preprocessor.validator.validators.osquery-config]
@@ -340,15 +346,15 @@ script = "validators/validate-osquery-config.sh"
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
 script = "validators/validate-sqlite.sh"  # Runs on HOST with jq
-# Optional: Override default commands (defaults shown)
-# setup_command = "sqlite3 /tmp/test.db"
+# Optional: Override default query command (default shown)
 # query_command = "sqlite3 -json /tmp/test.db"
 ```
 
 **Config fields:**
+- `fail_fast` - Stop on first validation failure (default: true)
+- `fixtures_dir` - Optional: Path to fixtures directory, mounted to /fixtures in containers
 - `container` - Docker image for tool execution (sqlite3, osqueryi)
 - `script` - Path to validator script (runs on HOST, receives JSON stdin)
-- `setup_command` - Optional: Command to run SETUP SQL in container
 - `query_command` - Optional: Command to run query in container (should output JSON)
 
 ## Current Tasks

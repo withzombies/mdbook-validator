@@ -327,3 +327,32 @@ async fn test_sqlite_expected_output_fails() {
         stderr
     );
 }
+
+/// Test: Multi-line SETUP with heredoc syntax works
+#[tokio::test]
+async fn test_sqlite_multiline_setup_heredoc() {
+    // Heredoc-style setup for multi-statement SQL
+    let setup = r"sqlite3 /tmp/test.db << 'EOF'
+CREATE TABLE products(id INTEGER, name TEXT, price REAL);
+INSERT INTO products VALUES(1, 'Widget', 9.99);
+INSERT INTO products VALUES(2, 'Gadget', 19.99);
+INSERT INTO products VALUES(3, 'Gizmo', 29.99);
+EOF";
+    let (exit_code, stdout, stderr) = run_sqlite_validator(
+        "SELECT * FROM products ORDER BY id;",
+        Some(setup),
+        Some("rows = 3"),
+        None,
+    )
+    .await;
+    assert_eq!(
+        exit_code, 0,
+        "multiline heredoc setup should pass: {}",
+        stderr
+    );
+    assert!(
+        stdout.contains("Widget") && stdout.contains("Gadget") && stdout.contains("Gizmo"),
+        "output should contain all products: {}",
+        stdout
+    );
+}

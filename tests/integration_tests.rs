@@ -461,6 +461,7 @@ fn preprocessor_uses_configured_osquery_validator() {
     let config = Config {
         validators,
         fail_fast: true,
+        fixtures_dir: None,
     };
 
     // Verify the validator script exists
@@ -530,6 +531,7 @@ fn preprocessor_errors_for_unknown_validator() {
     let config = Config {
         validators: HashMap::new(),
         fail_fast: true,
+        fixtures_dir: None,
     };
 
     // Create a book with unknown validator
@@ -579,6 +581,7 @@ fn preprocessor_errors_for_missing_script() {
     let config = Config {
         validators,
         fail_fast: true,
+        fixtures_dir: None,
     };
 
     let chapter_content = r#"# Test

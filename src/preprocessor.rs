@@ -284,7 +284,7 @@ impl ValidatorPreprocessor {
 
             // Get or start container for this validator
             let container = self
-                .get_or_start_container(&block.validator_name, config, containers)
+                .get_or_start_container(&block.validator_name, config, book_root, containers)
                 .await?;
 
             // Use host-based validation: run query in container, validate on host
@@ -434,6 +434,7 @@ impl ValidatorPreprocessor {
         &self,
         validator_name: &str,
         config: &Config,
+        book_root: &Path,
         containers: &'a mut HashMap<String, ValidatorContainer>,
     ) -> Result<&'a ValidatorContainer, Error> {
         // Check if we already have this container running
@@ -456,15 +457,46 @@ impl ValidatorPreprocessor {
             ))
         })?;
 
-        // Start the container (no script injection - host-based validation)
-        let container = ValidatorContainer::start_raw(&validator_config.container)
-            .await
-            .map_err(|e| {
-                Error::msg(format!(
-                    "Failed to start container '{}': {}",
-                    validator_config.container, e
-                ))
-            })?;
+        // Resolve and validate fixtures_dir if configured
+        let mount = if let Some(ref fixtures_dir) = config.fixtures_dir {
+            // Resolve relative path from book_root
+            let fixtures_path = if fixtures_dir.is_absolute() {
+                fixtures_dir.clone()
+            } else {
+                book_root.join(fixtures_dir)
+            };
+
+            // Validate fixtures_dir exists and is a directory
+            if !fixtures_path.exists() {
+                return Err(Error::msg(format!(
+                    "fixtures_dir '{}' does not exist",
+                    fixtures_path.display()
+                )));
+            }
+            if !fixtures_path.is_dir() {
+                return Err(Error::msg(format!(
+                    "fixtures_dir '{}' is not a directory",
+                    fixtures_path.display()
+                )));
+            }
+
+            Some((fixtures_path, "/fixtures"))
+        } else {
+            None
+        };
+
+        // Start the container with optional mount
+        let container = ValidatorContainer::start_raw_with_mount(
+            &validator_config.container,
+            mount.as_ref().map(|(p, c)| (p.as_path(), *c)),
+        )
+        .await
+        .map_err(|e| {
+            Error::msg(format!(
+                "Failed to start container '{}': {}",
+                validator_config.container, e
+            ))
+        })?;
 
         containers.insert(validator_name.to_owned(), container);
 

@@ -23,6 +23,7 @@ toml = "0.5"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5", features = ["precommit-hook", "run-cargo-clippy", "run-cargo-fmt"] }
+tempfile = "3"
 
 [lints.clippy]
 pedantic = { level = "deny", priority = -1 }

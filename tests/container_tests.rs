@@ -146,3 +146,63 @@ async fn test_exec_raw_nonexistent_command_fails() {
         "nonexistent command should have non-zero exit code"
     );
 }
+
+// ============================================================================
+// start_raw_with_mount tests
+// ============================================================================
+
+#[tokio::test]
+async fn test_container_mounts_fixtures_dir() {
+    use std::fs;
+
+    // Use project directory for temp files (macOS Docker can't access /var/folders)
+    let project_dir = std::env::current_dir().expect("get current dir");
+    let fixtures_dir = project_dir.join("target").join("test-fixtures-mount");
+
+    // Clean up and create fresh
+    let _ = fs::remove_dir_all(&fixtures_dir);
+    fs::create_dir_all(&fixtures_dir).expect("create fixtures dir");
+
+    let test_file = fixtures_dir.join("test.txt");
+    fs::write(&test_file, "hello from fixtures").expect("write test file");
+
+    // Start container with mount
+    let container = ValidatorContainer::start_raw_with_mount(
+        "alpine:3",
+        Some((fixtures_dir.as_path(), "/fixtures")),
+    )
+    .await
+    .expect("container should start with mount");
+
+    // Verify file is accessible at /fixtures/test.txt
+    let result = container
+        .exec_raw(&["cat", "/fixtures/test.txt"])
+        .await
+        .expect("exec should succeed");
+
+    // Clean up
+    let _ = fs::remove_dir_all(&fixtures_dir);
+
+    assert_eq!(result.exit_code, 0, "cat should succeed");
+    assert!(
+        result.stdout.contains("hello from fixtures"),
+        "mounted file should be readable: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn test_container_mount_none_works() {
+    // Test that start_raw_with_mount works without a mount (same as start_raw)
+    let container = ValidatorContainer::start_raw_with_mount("alpine:3", None)
+        .await
+        .expect("container should start without mount");
+
+    let result = container
+        .exec_raw(&["echo", "no mount"])
+        .await
+        .expect("exec should succeed");
+
+    assert_eq!(result.exit_code, 0);
+    assert!(result.stdout.contains("no mount"));
+}
