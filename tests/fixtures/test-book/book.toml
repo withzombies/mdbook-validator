@@ -12,3 +12,8 @@ script = "validators/validate-osquery.sh"
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
 script = "validators/validate-sqlite.sh"
+
+[preprocessor.validator.validators.osquery-config]
+container = "osquery/osquery:5.17.0-ubuntu22.04"
+script = "validators/validate-osquery-config.sh"
+exec_command = "sh -c 'printf \"%s\" \"$0\" > /tmp/config.json && osqueryi --config_path=/tmp/config.json --config_check >&2 && cat /tmp/config.json'"
