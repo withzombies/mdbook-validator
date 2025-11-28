@@ -26,6 +26,7 @@ pub struct HostValidationResult {
 /// * `json_input` - JSON output from container to validate
 /// * `assertions` - Optional assertion rules
 /// * `expect` - Optional expected output
+/// * `container_stderr` - Optional stderr output from container (for warning detection)
 ///
 /// # Errors
 ///
@@ -35,6 +36,7 @@ pub fn run_validator(
     json_input: &str,
     assertions: Option<&str>,
     expect: Option<&str>,
+    container_stderr: Option<&str>,
 ) -> Result<HostValidationResult> {
     let mut cmd = Command::new("sh");
     cmd.arg(script_path)
@@ -48,6 +50,9 @@ pub fn run_validator(
     }
     if let Some(e) = expect {
         cmd.env("VALIDATOR_EXPECT", e);
+    }
+    if let Some(stderr) = container_stderr {
+        cmd.env("VALIDATOR_CONTAINER_STDERR", stderr);
     }
 
     let mut child = cmd

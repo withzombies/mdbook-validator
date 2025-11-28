@@ -10,6 +10,7 @@
 # Environment:
 # - VALIDATOR_ASSERTIONS: Assertion rules, newline-separated (optional)
 # - VALIDATOR_EXPECT: Expected JSON output for exact match (optional)
+# - VALIDATOR_CONTAINER_STDERR: Container stderr for warning detection (optional)
 #
 # Exits 0 on success, 1 on failure with details to stderr.
 #
@@ -24,6 +25,18 @@ command -v jq >/dev/null 2>&1 || {
 
 # Read JSON from stdin
 JSON_INPUT=$(cat)
+
+# Check for osquery warnings in container stderr
+# osquery is lenient with unknown options (warns but passes with exit 0)
+# We make warnings into errors for stricter validation
+if [ -n "${VALIDATOR_CONTAINER_STDERR:-}" ]; then
+    if echo "$VALIDATOR_CONTAINER_STDERR" | grep -q "Cannot set unknown"; then
+        echo "Config validation failed: osquery reported unknown option(s)" >&2
+        echo "Container stderr:" >&2
+        echo "$VALIDATOR_CONTAINER_STDERR" >&2
+        exit 1
+    fi
+fi
 
 # If no assertions and no expected output, just verify we got valid JSON
 if [ -z "${VALIDATOR_ASSERTIONS:-}" ] && [ -z "${VALIDATOR_EXPECT:-}" ]; then

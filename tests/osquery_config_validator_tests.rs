@@ -76,10 +76,16 @@ async fn run_osquery_config_validator(
         );
     }
 
-    // Validate config with host validator (checks assertions)
-    let validation_result =
-        host_validator::run_validator(VALIDATOR_SCRIPT, &result.stdout, assertions, expect)
-            .expect("host validator should run");
+    // Validate config with host validator (checks assertions and container warnings)
+    // Pass container stderr so validator can detect osquery warnings like "Cannot set unknown"
+    let validation_result = host_validator::run_validator(
+        VALIDATOR_SCRIPT,
+        &result.stdout,
+        assertions,
+        expect,
+        Some(&result.stderr),
+    )
+    .expect("host validator should run");
 
     println!("Validation exit code: {}", validation_result.exit_code);
     println!("Validation stdout: {}", validation_result.stdout);
@@ -126,30 +132,24 @@ async fn test_osquery_config_invalid_json_fails() {
     );
 }
 
-/// Test: Valid JSON but unknown osquery option produces warning but passes
+/// Test: Valid JSON but unknown osquery option fails validation
 ///
-/// LEARNING: osquery is intentionally lenient with unknown options for
-/// forward/backward compatibility. Unknown options produce a warning
-/// (W level) but do NOT cause `config_check` to fail (exit code remains 0).
-/// This is documented osquery behavior, not a bug.
+/// osquery `--config_check` is lenient with unknown options (warns but exits 0),
+/// but our validator makes warnings into errors for stricter validation.
+/// This catches typos like `loger_path` instead of `logger_path`.
 #[tokio::test]
-async fn test_osquery_config_unknown_option_warns_but_passes() {
+async fn test_osquery_config_unknown_option_fails() {
     // Valid JSON but completely fake osquery option
     let config = r#"{"options": {"completely_fake_nonexistent_option_xyz_12345": "value"}}"#;
     let (exit_code, _, stderr) = run_osquery_config_validator(config, None, None).await;
 
-    // osquery is lenient - unknown options warn but don't fail
-    assert_eq!(
-        exit_code, 0,
-        "unknown option should warn but pass (osquery is lenient)"
-    );
+    // Our validator makes osquery warnings into errors
+    assert_ne!(exit_code, 0, "unknown option should fail validation");
 
-    // But there should be a warning in stderr from osquery
+    // Stderr should indicate the failure
     assert!(
-        stderr.contains("Cannot set unknown")
-            || stderr.to_lowercase().contains("unknown")
-            || stderr.to_lowercase().contains("warning"),
-        "stderr should contain warning about unknown option: {}",
+        stderr.contains("Cannot set unknown") || stderr.contains("unknown option"),
+        "stderr should mention unknown option: {}",
         stderr
     );
 }

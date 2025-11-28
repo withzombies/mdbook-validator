@@ -379,6 +379,7 @@ impl ValidatorPreprocessor {
             &query_result.stdout,
             block.markers.assertions.as_deref(),
             block.markers.expect.as_deref(),
+            Some(&query_result.stderr), // Pass container stderr for warning detection
         )
         .map_err(|e| {
             Error::msg(format!(

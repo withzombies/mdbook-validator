@@ -64,9 +64,14 @@ async fn run_osquery_validator(
     }
 
     // Validate JSON output on host
-    let validation_result =
-        host_validator::run_validator(VALIDATOR_SCRIPT, &query_result.stdout, assertions, expect)
-            .expect("host validator should run");
+    let validation_result = host_validator::run_validator(
+        VALIDATOR_SCRIPT,
+        &query_result.stdout,
+        assertions,
+        expect,
+        None,
+    )
+    .expect("host validator should run");
 
     println!("Validation exit code: {}", validation_result.exit_code);
     println!("Validation stdout: {}", validation_result.stdout);
