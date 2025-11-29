@@ -2,6 +2,11 @@
 //!
 //! Bridges the synchronous mdBook Preprocessor trait to async container validation.
 
+// Default exec commands for validators when not configured
+const DEFAULT_EXEC_SQLITE: &str = "sqlite3 -json /tmp/test.db";
+const DEFAULT_EXEC_OSQUERY: &str = "osqueryi --json";
+const DEFAULT_EXEC_FALLBACK: &str = "cat";
+
 use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Write;
@@ -429,9 +434,9 @@ impl ValidatorPreprocessor {
             .exec_command
             .clone()
             .unwrap_or_else(|| match validator_name {
-                "sqlite" => "sqlite3 -json /tmp/test.db".to_owned(),
-                "osquery" => "osqueryi --json".to_owned(),
-                _ => "cat".to_owned(),
+                "sqlite" => DEFAULT_EXEC_SQLITE.to_owned(),
+                "osquery" => DEFAULT_EXEC_OSQUERY.to_owned(),
+                _ => DEFAULT_EXEC_FALLBACK.to_owned(),
             })
     }
 

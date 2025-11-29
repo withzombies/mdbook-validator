@@ -9,6 +9,7 @@ use std::process::{Command, Stdio};
 
 /// Result of running a host validator
 #[derive(Debug)]
+#[must_use]
 pub struct HostValidationResult {
     /// Exit code from the validator (0 = success)
     pub exit_code: i32,

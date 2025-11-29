@@ -53,6 +53,7 @@ async fn collect_exec_output(
 
 /// Result of executing a validator
 #[derive(Debug)]
+#[must_use]
 pub struct ValidationResult {
     /// Exit code from the validator (0 = success)
     pub exit_code: i64,

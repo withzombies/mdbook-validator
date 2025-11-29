@@ -564,6 +564,149 @@ SELECT 1;
     }
 }
 
+/// Test: EXPECT marker passes when output matches expected
+///
+/// Full end-to-end test with `SQLite` container, EXPECT marker parsed from markdown.
+#[test]
+fn preprocessor_expect_marker_passes_when_output_matches() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+
+    // Configure SQLite validator
+    let mut validators = HashMap::new();
+    validators.insert(
+        "sqlite".to_string(),
+        ValidatorConfig {
+            container: "keinos/sqlite3:3.47.2".to_string(),
+            script: PathBuf::from("validators/validate-sqlite.sh"),
+            exec_command: None,
+        },
+    );
+
+    let config = Config {
+        validators,
+        fail_fast: true,
+        fixtures_dir: None,
+    };
+
+    // Create book with EXPECT marker that should match
+    // We use a deterministic query with known output
+    let chapter_content = r#"# EXPECT Test
+
+```sql validator=sqlite
+<!--SETUP
+sqlite3 /tmp/test.db 'CREATE TABLE items(id INTEGER); INSERT INTO items VALUES(1);'
+-->
+SELECT id FROM items;
+<!--EXPECT
+[{"id":1}]
+-->
+```
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(processed_book) => {
+            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+                panic!("Expected chapter");
+            };
+
+            let output = &chapter.content;
+
+            // EXPECT marker should be stripped
+            assert!(
+                !output.contains("<!--EXPECT"),
+                "EXPECT marker should be stripped. Output:\n{output}"
+            );
+            assert!(
+                !output.contains(r#"[{"id":1}]"#),
+                "Expected output should be stripped. Output:\n{output}"
+            );
+
+            // SETUP should also be stripped
+            assert!(
+                !output.contains("<!--SETUP"),
+                "SETUP marker should be stripped. Output:\n{output}"
+            );
+
+            // Visible content remains
+            assert!(
+                output.contains("SELECT id FROM items"),
+                "SQL query should remain. Output:\n{output}"
+            );
+
+            println!("EXPECT pass test succeeded! Output:\n{output}");
+        }
+        Err(e) => {
+            panic!("Preprocessor should pass when EXPECT matches actual output: {e}");
+        }
+    }
+}
+
+/// Test: EXPECT marker fails when output doesn't match expected
+///
+/// Verifies that EXPECT marker comparison produces clear error on mismatch.
+#[test]
+fn preprocessor_expect_marker_fails_when_output_differs() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+
+    // Configure SQLite validator
+    let mut validators = HashMap::new();
+    validators.insert(
+        "sqlite".to_string(),
+        ValidatorConfig {
+            container: "keinos/sqlite3:3.47.2".to_string(),
+            script: PathBuf::from("validators/validate-sqlite.sh"),
+            exec_command: None,
+        },
+    );
+
+    let config = Config {
+        validators,
+        fail_fast: true,
+        fixtures_dir: None,
+    };
+
+    // Create book with EXPECT marker that WON'T match (expecting id=999, actual is id=1)
+    let chapter_content = r#"# EXPECT Mismatch Test
+
+```sql validator=sqlite
+<!--SETUP
+sqlite3 /tmp/test.db 'CREATE TABLE items(id INTEGER); INSERT INTO items VALUES(1);'
+-->
+SELECT id FROM items;
+<!--EXPECT
+[{"id":999}]
+-->
+```
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(_) => {
+            panic!("Preprocessor should fail when EXPECT doesn't match actual output");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+
+            // Error should indicate validation failure
+            assert!(
+                error_msg.contains("Validation failed") || error_msg.contains("mismatch"),
+                "Error should mention validation failure or mismatch. Got: {error_msg}"
+            );
+
+            println!("EXPECT fail test succeeded! Error:\n{error_msg}");
+        }
+    }
+}
+
 /// Test: Preprocessor errors when validator script not found
 #[test]
 fn preprocessor_errors_for_missing_script() {
