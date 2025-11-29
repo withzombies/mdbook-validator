@@ -28,3 +28,10 @@ exec_command = "sh -c 'printf \"%s\" \"$0\" > /tmp/script.sh && shellcheck /tmp/
 container = "python:3.12-slim"
 script = "validators/validate-python.sh"
 exec_command = "sh -c 'printf \"%s\" \"$0\" > /tmp/script.py && python3 -m py_compile /tmp/script.py >&2'"
+
+[preprocessor.validator.validators.bash-exec]
+container = "ubuntu:22.04"
+script = "validators/validate-bash-exec.sh"
+# exec_command runs script and outputs JSON: {"exit_code": N, "stdout": "...", "stderr": "..."}
+# Using TOML literal string (''') to avoid escaping issues
+exec_command = '''sh -c 'printf "%s" "$0" > /tmp/script.sh && chmod +x /tmp/script.sh && bash /tmp/script.sh > /tmp/stdout.txt 2> /tmp/stderr.txt; EXIT_CODE=$?; STDOUT=$(cat /tmp/stdout.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); STDERR=$(cat /tmp/stderr.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); printf "{\"exit_code\": %d, \"stdout\": \"%s\", \"stderr\": \"%s\"}" "$EXIT_CODE" "$STDOUT" "$STDERR"''''
