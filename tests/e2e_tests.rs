@@ -3,6 +3,7 @@
 //! These tests run `mdbook build` against a real test book and verify:
 //! 1. Build succeeds with valid examples
 //! 2. Markers are stripped from output
+//! 3. Invalid examples fail with expected errors
 //!
 //! Requires: mdbook CLI installed, Docker running
 //!
@@ -16,6 +17,7 @@
     clippy::expect_fun_call
 )]
 
+use std::fs;
 use std::path::PathBuf;
 use std::process::Command;
 use std::sync::OnceLock;
@@ -126,4 +128,175 @@ fn e2e_output_has_no_markers() {
     );
 
     println!("E2E marker stripping test passed!");
+}
+
+/// Test: Invalid shellcheck script fails with SC2086 error
+///
+/// Verifies that:
+/// - mdbook build fails when shellcheck finds issues
+/// - Error output contains SC2086 (unquoted variable)
+/// - The failure is clear and actionable
+///
+/// Uses a temporary book directory to avoid race conditions with other tests.
+#[test]
+fn e2e_invalid_shellcheck_fails_with_sc2086() {
+    use std::env::temp_dir;
+
+    let book_path = e2e_book_path();
+    let invalid_md_path = book_path.join("src/invalid-shellcheck.md");
+
+    // Verify the invalid example file exists
+    assert!(
+        invalid_md_path.exists(),
+        "Invalid shellcheck fixture should exist at {}",
+        invalid_md_path.display()
+    );
+
+    // Create a temporary book directory to avoid race conditions
+    let temp_book = temp_dir().join(format!("e2e-invalid-shellcheck-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_book); // Clean up from previous runs
+    fs::create_dir_all(temp_book.join("src")).expect("Should create temp book src dir");
+
+    // Copy book.toml (update paths since we're in a different location)
+    let book_toml = fs::read_to_string(book_path.join("book.toml")).expect("Read book.toml");
+    fs::write(temp_book.join("book.toml"), &book_toml).expect("Write temp book.toml");
+
+    // Create SUMMARY.md with only the invalid file
+    fs::write(
+        temp_book.join("src/SUMMARY.md"),
+        "# Summary\n\n- [Invalid Shellcheck](./invalid-shellcheck.md)\n",
+    )
+    .expect("Write temp SUMMARY.md");
+
+    // Copy invalid-shellcheck.md to temp book
+    fs::copy(
+        &invalid_md_path,
+        temp_book.join("src/invalid-shellcheck.md"),
+    )
+    .expect("Copy invalid-shellcheck.md");
+
+    // Symlink validators directory (needed for validator scripts)
+    #[cfg(unix)]
+    {
+        let validators_src = book_path.join("validators");
+        let validators_dst = temp_book.join("validators");
+        if validators_src.exists() {
+            std::os::unix::fs::symlink(&validators_src, &validators_dst)
+                .expect("Symlink validators");
+        }
+    }
+
+    // Run mdbook build - should fail
+    let output = Command::new("mdbook")
+        .args(["build", temp_book.to_str().expect("valid path")])
+        .output()
+        .expect("Failed to execute mdbook");
+
+    // Clean up temp directory
+    let _ = fs::remove_dir_all(&temp_book);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    println!("Invalid shellcheck test stdout:\n{stdout}");
+    println!("Invalid shellcheck test stderr:\n{stderr}");
+
+    // Build should fail
+    assert!(
+        !output.status.success(),
+        "mdbook build should fail with invalid shellcheck example.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    // Error should mention SC2086 (unquoted variable)
+    let combined_output = format!("{stdout}{stderr}");
+    assert!(
+        combined_output.contains("SC2086"),
+        "Error output should contain SC2086 (unquoted variable).\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    println!("E2E invalid shellcheck test passed - correctly detected SC2086!");
+}
+
+/// Test: Invalid Python script fails with `SyntaxError`
+///
+/// Verifies that:
+/// - mdbook build fails when Python has syntax errors
+/// - Error output contains `SyntaxError`
+/// - The failure is clear and actionable
+///
+/// Uses a temporary book directory to avoid race conditions with other tests.
+#[test]
+fn e2e_invalid_python_fails_with_syntax_error() {
+    use std::env::temp_dir;
+
+    let book_path = e2e_book_path();
+    let invalid_md_path = book_path.join("src/invalid-python.md");
+
+    // Verify the invalid example file exists
+    assert!(
+        invalid_md_path.exists(),
+        "Invalid python fixture should exist at {}",
+        invalid_md_path.display()
+    );
+
+    // Create a temporary book directory to avoid race conditions
+    let temp_book = temp_dir().join(format!("e2e-invalid-python-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&temp_book);
+    fs::create_dir_all(temp_book.join("src")).expect("Should create temp book src dir");
+
+    // Copy book.toml
+    let book_toml = fs::read_to_string(book_path.join("book.toml")).expect("Read book.toml");
+    fs::write(temp_book.join("book.toml"), &book_toml).expect("Write temp book.toml");
+
+    // Create SUMMARY.md with only the invalid file
+    fs::write(
+        temp_book.join("src/SUMMARY.md"),
+        "# Summary\n\n- [Invalid Python](./invalid-python.md)\n",
+    )
+    .expect("Write temp SUMMARY.md");
+
+    // Copy invalid-python.md to temp book
+    fs::copy(&invalid_md_path, temp_book.join("src/invalid-python.md"))
+        .expect("Copy invalid-python.md");
+
+    // Symlink validators directory
+    #[cfg(unix)]
+    {
+        let validators_src = book_path.join("validators");
+        let validators_dst = temp_book.join("validators");
+        if validators_src.exists() {
+            std::os::unix::fs::symlink(&validators_src, &validators_dst)
+                .expect("Symlink validators");
+        }
+    }
+
+    // Run mdbook build - should fail
+    let output = Command::new("mdbook")
+        .args(["build", temp_book.to_str().expect("valid path")])
+        .output()
+        .expect("Failed to execute mdbook");
+
+    // Clean up temp directory
+    let _ = fs::remove_dir_all(&temp_book);
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+
+    println!("Invalid python test stdout:\n{stdout}");
+    println!("Invalid python test stderr:\n{stderr}");
+
+    // Build should fail
+    assert!(
+        !output.status.success(),
+        "mdbook build should fail with invalid python example.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    // Error should mention SyntaxError
+    let combined_output = format!("{stdout}{stderr}");
+    assert!(
+        combined_output.contains("SyntaxError"),
+        "Error output should contain SyntaxError.\nstdout: {stdout}\nstderr: {stderr}"
+    );
+
+    println!("E2E invalid python test passed - correctly detected SyntaxError!");
 }

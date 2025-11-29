@@ -39,3 +39,27 @@ Valid osquery configuration file:
   }
 }
 ```
+
+## Shellcheck (Static Analysis)
+
+Valid shell script with properly quoted variables:
+
+```bash validator=shellcheck
+#!/bin/bash
+# Valid script - variables properly quoted
+name="world"
+echo "Hello, $name"
+```
+
+## Python (Static Analysis)
+
+Valid Python script with correct syntax:
+
+```python validator=python
+def hello(name):
+    """Greet someone."""
+    return f"Hello, {name}!"
+
+if __name__ == "__main__":
+    print(hello("world"))
+```

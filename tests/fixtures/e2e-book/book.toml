@@ -3,18 +3,28 @@ title = "E2E Test Book"
 authors = ["Test"]
 
 [preprocessor.validator]
-command = "sh -c 'cargo run --manifest-path ../../../Cargo.toml -- \"$@\"' --"
+command = "cargo run --quiet --"
 fail_fast = true
 
 [preprocessor.validator.validators.osquery]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
-script = "../../../validators/validate-osquery.sh"
+script = "validators/validate-osquery.sh"
 
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
-script = "../../../validators/validate-sqlite.sh"
+script = "validators/validate-sqlite.sh"
 
 [preprocessor.validator.validators.osquery-config]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
-script = "../../../validators/validate-osquery-config.sh"
+script = "validators/validate-osquery-config.sh"
 exec_command = "sh -c 'printf \"%s\" \"$0\" > /tmp/config.json && osqueryi --config_path=/tmp/config.json --config_check >&2 && cat /tmp/config.json'"
+
+[preprocessor.validator.validators.shellcheck]
+container = "koalaman/shellcheck-alpine:stable"
+script = "validators/validate-shellcheck.sh"
+exec_command = "sh -c 'printf \"%s\" \"$0\" > /tmp/script.sh && shellcheck /tmp/script.sh >&2'"
+
+[preprocessor.validator.validators.python]
+container = "python:3.12-slim"
+script = "validators/validate-python.sh"
+exec_command = "sh -c 'printf \"%s\" \"$0\" > /tmp/script.py && python3 -m py_compile /tmp/script.py >&2'"

@@ -318,6 +318,23 @@ exit 0
 
 **Key design:** Validators don't run queries - they only validate JSON output from container. This separation keeps validators simple and portable.
 
+### Creating New Validators
+
+A comprehensive template is available at `validators/validate-template.sh`. Copy this file and customize for your use case. The template includes:
+
+- Full documentation of all environment variables
+- Patterns for checking container stderr errors
+- Patterns for processing assertions (rows, contains)
+- Patterns for expected output matching
+- Examples from all existing validators
+
+```bash
+# Create a new validator
+cp validators/validate-template.sh validators/validate-myvalidator.sh
+chmod +x validators/validate-myvalidator.sh
+# Edit to customize for your tool
+```
+
 ## Configuration (book.toml)
 
 ```toml
