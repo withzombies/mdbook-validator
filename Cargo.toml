@@ -20,7 +20,7 @@ serde_json = "1.0"
 pulldown-cmark = "0.13"
 testcontainers = "0.23"
 bollard = "0.18"
-tokio = { version = "1", features = ["rt", "macros"] }
+tokio = { version = "1", features = ["rt", "macros", "io-util"] }
 futures-util = "0.3"
 tracing = "0.1"
 tracing-subscriber = "0.3"

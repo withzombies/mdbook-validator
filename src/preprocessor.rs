@@ -2,6 +2,7 @@
 //!
 //! Bridges the synchronous mdBook Preprocessor trait to async container validation.
 
+use std::collections::hash_map::Entry;
 use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
@@ -350,6 +351,7 @@ impl ValidatorPreprocessor {
         }
 
         // 2. Run query in container, get JSON output
+        // Content is passed via stdin to avoid shell injection
         let query_sql = block.markers.visible_content.trim();
         if query_sql.is_empty() {
             return Err(Error::msg(format!(
@@ -358,12 +360,9 @@ impl ValidatorPreprocessor {
             )));
         }
 
-        // Escape content for shell: use single quotes with internal single quotes escaped
-        // as '\'' (end quote, escaped quote, start quote)
-        let escaped_content = query_sql.replace('\'', "'\\''");
-        let cmd = format!("{exec_cmd} '{escaped_content}'");
+        // Pass content via stdin (secure) instead of shell interpolation (vulnerable)
         let query_result = container
-            .exec_raw(&["sh", "-c", &cmd])
+            .exec_with_stdin(&["sh", "-c", &exec_cmd], query_sql)
             .await
             .map_err(|e| Error::msg(format!("Query exec failed: {e}")))?;
 
@@ -444,73 +443,65 @@ impl ValidatorPreprocessor {
         book_root: &Path,
         containers: &'a mut HashMap<String, ValidatorContainer>,
     ) -> Result<&'a ValidatorContainer, Error> {
-        // Check if we already have this container running
-        if containers.contains_key(validator_name) {
-            // Safe because we just checked contains_key
-            return Ok(containers
-                .get(validator_name)
-                .unwrap_or_else(|| unreachable!()));
+        match containers.entry(validator_name.to_owned()) {
+            Entry::Occupied(entry) => Ok(entry.into_mut()),
+            Entry::Vacant(entry) => {
+                // Look up validator config
+                let validator_config = config.get_validator(validator_name).map_err(|e| {
+                    Error::msg(format!("Unknown validator '{validator_name}': {e}"))
+                })?;
+
+                // Validate config values
+                validator_config.validate().map_err(|e| {
+                    Error::msg(format!(
+                        "Invalid validator config for '{validator_name}': {e}"
+                    ))
+                })?;
+
+                // Resolve and validate fixtures_dir if configured
+                let mount = if let Some(ref fixtures_dir) = config.fixtures_dir {
+                    // Resolve relative path from book_root
+                    let fixtures_path = if fixtures_dir.is_absolute() {
+                        fixtures_dir.clone()
+                    } else {
+                        book_root.join(fixtures_dir)
+                    };
+
+                    // Validate fixtures_dir exists and is a directory
+                    if !fixtures_path.exists() {
+                        return Err(Error::msg(format!(
+                            "fixtures_dir '{}' does not exist",
+                            fixtures_path.display()
+                        )));
+                    }
+                    if !fixtures_path.is_dir() {
+                        return Err(Error::msg(format!(
+                            "fixtures_dir '{}' is not a directory",
+                            fixtures_path.display()
+                        )));
+                    }
+
+                    Some((fixtures_path, "/fixtures"))
+                } else {
+                    None
+                };
+
+                // Start the container with optional mount
+                let container = ValidatorContainer::start_raw_with_mount(
+                    &validator_config.container,
+                    mount.as_ref().map(|(p, c)| (p.as_path(), *c)),
+                )
+                .await
+                .map_err(|e| {
+                    Error::msg(format!(
+                        "Failed to start container '{}': {}",
+                        validator_config.container, e
+                    ))
+                })?;
+
+                Ok(entry.insert(container))
+            }
         }
-
-        // Look up validator config
-        let validator_config = config
-            .get_validator(validator_name)
-            .map_err(|e| Error::msg(format!("Unknown validator '{validator_name}': {e}")))?;
-
-        // Validate config values
-        validator_config.validate().map_err(|e| {
-            Error::msg(format!(
-                "Invalid validator config for '{validator_name}': {e}"
-            ))
-        })?;
-
-        // Resolve and validate fixtures_dir if configured
-        let mount = if let Some(ref fixtures_dir) = config.fixtures_dir {
-            // Resolve relative path from book_root
-            let fixtures_path = if fixtures_dir.is_absolute() {
-                fixtures_dir.clone()
-            } else {
-                book_root.join(fixtures_dir)
-            };
-
-            // Validate fixtures_dir exists and is a directory
-            if !fixtures_path.exists() {
-                return Err(Error::msg(format!(
-                    "fixtures_dir '{}' does not exist",
-                    fixtures_path.display()
-                )));
-            }
-            if !fixtures_path.is_dir() {
-                return Err(Error::msg(format!(
-                    "fixtures_dir '{}' is not a directory",
-                    fixtures_path.display()
-                )));
-            }
-
-            Some((fixtures_path, "/fixtures"))
-        } else {
-            None
-        };
-
-        // Start the container with optional mount
-        let container = ValidatorContainer::start_raw_with_mount(
-            &validator_config.container,
-            mount.as_ref().map(|(p, c)| (p.as_path(), *c)),
-        )
-        .await
-        .map_err(|e| {
-            Error::msg(format!(
-                "Failed to start container '{}': {}",
-                validator_config.container, e
-            ))
-        })?;
-
-        containers.insert(validator_name.to_owned(), container);
-
-        // Safe because we just inserted
-        Ok(containers
-            .get(validator_name)
-            .unwrap_or_else(|| unreachable!()))
     }
 
     /// Find all code blocks with `validator=` attribute

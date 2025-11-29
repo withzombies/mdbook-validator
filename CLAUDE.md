@@ -465,7 +465,18 @@ script = "validators/validate-python.sh"  # Syntax check, runs on HOST
 - `fixtures_dir` - Optional: Path to fixtures directory, mounted to /fixtures in containers
 - `container` - Docker image for tool execution (sqlite3, osqueryi)
 - `script` - Path to validator script (runs on HOST, receives JSON stdin)
-- `exec_command` - Optional: Command to execute content in container (should output JSON)
+- `exec_command` - Optional: Command to execute content in container (content passed via stdin, should output JSON)
+
+**IMPORTANT: stdin-based content passing**
+Content is passed to exec_command via stdin for security (eliminates shell injection). Custom exec_commands should read from stdin using `cat`:
+
+```toml
+# For tools that need content written to a file:
+exec_command = "sh -c 'cat > /tmp/script.sh && shellcheck /tmp/script.sh'"
+
+# Default exec_commands read stdin directly (sqlite3, osqueryi support this natively)
+exec_command = "sqlite3 -json /tmp/test.db"  # Reads SQL from stdin
+```
 
 ## Current Tasks
 

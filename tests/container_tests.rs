@@ -208,3 +208,82 @@ async fn test_container_mount_none_works() {
     assert_eq!(result.exit_code, 0);
     assert!(result.stdout.contains("no mount"));
 }
+
+// ============================================================================
+// exec_with_stdin tests (secure content passing)
+// ============================================================================
+
+#[tokio::test]
+async fn test_exec_with_stdin_passes_content() {
+    // Test that exec_with_stdin passes content via stdin, not shell args
+    let container = ValidatorContainer::start_raw("alpine:3")
+        .await
+        .expect("Docker available");
+
+    // Use 'cat' to read stdin and echo it back
+    let result = container
+        .exec_with_stdin(&["cat"], "hello from stdin")
+        .await
+        .expect("exec_with_stdin succeeded");
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("hello from stdin"),
+        "stdout should contain stdin content: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn test_exec_with_stdin_handles_special_chars() {
+    // Test that special shell characters are handled correctly via stdin
+    // These would break if passed via shell interpolation
+    let container = ValidatorContainer::start_raw("alpine:3")
+        .await
+        .expect("Docker available");
+
+    // Content with shell-dangerous characters: single quotes, double quotes,
+    // backticks, dollar signs, newlines, semicolons, pipes
+    let dangerous_content = r#"test 'single' "double" `backtick` $VAR; rm -rf /; | cat"#;
+
+    let result = container
+        .exec_with_stdin(&["cat"], dangerous_content)
+        .await
+        .expect("exec_with_stdin succeeded");
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains(dangerous_content),
+        "stdout should contain exact stdin content with special chars: {}",
+        result.stdout
+    );
+}
+
+#[tokio::test]
+async fn test_exec_with_stdin_captures_output() {
+    // Test that exec_with_stdin captures both stdout and stderr
+    let container = ValidatorContainer::start_raw("alpine:3")
+        .await
+        .expect("Docker available");
+
+    // Use sh -c to read stdin and produce both stdout and stderr
+    let result = container
+        .exec_with_stdin(
+            &["sh", "-c", "cat; echo stderr_output >&2"],
+            "stdin_content",
+        )
+        .await
+        .expect("exec_with_stdin succeeded");
+
+    assert_eq!(result.exit_code, 0);
+    assert!(
+        result.stdout.contains("stdin_content"),
+        "stdout should contain stdin: {}",
+        result.stdout
+    );
+    assert!(
+        result.stderr.contains("stderr_output"),
+        "stderr should be captured: {}",
+        result.stderr
+    );
+}

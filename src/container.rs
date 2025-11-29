@@ -4,10 +4,52 @@
 //! for exec with environment variables.
 
 use anyhow::{Context, Result};
+use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
 use testcontainers::core::client::docker_client_instance;
 use testcontainers::{runners::AsyncRunner, ContainerAsync, GenericImage, ImageExt};
+
+/// Collect stdout/stderr from an exec output stream and get the exit code.
+///
+/// This is an internal helper used by both `exec_with_env` and `exec_raw` to avoid
+/// code duplication in output collection logic.
+async fn collect_exec_output(
+    docker: &bollard::Docker,
+    exec_id: &str,
+    mut output: impl futures_util::Stream<Item = Result<LogOutput, bollard::errors::Error>> + Unpin,
+) -> Result<ValidationResult> {
+    let mut stdout = Vec::new();
+    let mut stderr = Vec::new();
+
+    while let Some(result) = output.next().await {
+        match result {
+            Ok(LogOutput::StdOut { message }) => {
+                stdout.extend_from_slice(&message);
+            }
+            Ok(LogOutput::StdErr { message }) => {
+                stderr.extend_from_slice(&message);
+            }
+            Ok(_) => {}
+            Err(e) => {
+                anyhow::bail!("Output stream error: {e}");
+            }
+        }
+    }
+
+    // Get exit code
+    let inspect = docker
+        .inspect_exec(exec_id)
+        .await
+        .context("Failed to inspect exec")?;
+    let exit_code = inspect.exit_code.unwrap_or(-1);
+
+    Ok(ValidationResult {
+        exit_code,
+        stdout: String::from_utf8_lossy(&stdout).to_string(),
+        stderr: String::from_utf8_lossy(&stderr).to_string(),
+    })
+}
 
 /// Result of executing a validator
 #[derive(Debug)]
@@ -127,41 +169,11 @@ impl ValidatorContainer {
             .await
             .context("Failed to start exec")?;
 
-        let StartExecResults::Attached { mut output, .. } = start_result else {
+        let StartExecResults::Attached { output, .. } = start_result else {
             anyhow::bail!("Exec should be attached but wasn't");
         };
 
-        // Collect stdout and stderr
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
-
-        while let Some(result) = output.next().await {
-            match result {
-                Ok(bollard::container::LogOutput::StdOut { message }) => {
-                    stdout.extend_from_slice(&message);
-                }
-                Ok(bollard::container::LogOutput::StdErr { message }) => {
-                    stderr.extend_from_slice(&message);
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    anyhow::bail!("Output stream error: {e}");
-                }
-            }
-        }
-
-        // Get exit code
-        let inspect = docker
-            .inspect_exec(&exec_id)
-            .await
-            .context("Failed to inspect exec")?;
-        let exit_code = inspect.exit_code.unwrap_or(-1);
-
-        Ok(ValidationResult {
-            exit_code,
-            stdout: String::from_utf8_lossy(&stdout).to_string(),
-            stderr: String::from_utf8_lossy(&stderr).to_string(),
-        })
+        collect_exec_output(&docker, &exec_id, output).await
     }
 
     /// Get the container ID
@@ -209,41 +221,72 @@ impl ValidatorContainer {
             .await
             .context("Failed to start exec")?;
 
-        let StartExecResults::Attached { mut output, .. } = start_result else {
+        let StartExecResults::Attached { output, .. } = start_result else {
             anyhow::bail!("Exec should be attached but wasn't");
         };
 
-        // Collect stdout and stderr
-        let mut stdout = Vec::new();
-        let mut stderr = Vec::new();
+        collect_exec_output(&docker, &exec_id, output).await
+    }
 
-        while let Some(result) = output.next().await {
-            match result {
-                Ok(bollard::container::LogOutput::StdOut { message }) => {
-                    stdout.extend_from_slice(&message);
-                }
-                Ok(bollard::container::LogOutput::StdErr { message }) => {
-                    stderr.extend_from_slice(&message);
-                }
-                Ok(_) => {}
-                Err(e) => {
-                    anyhow::bail!("Output stream error: {e}");
-                }
-            }
-        }
+    /// Execute a command in the container with stdin content.
+    ///
+    /// This passes content via stdin instead of shell interpolation, eliminating
+    /// shell injection risks from special characters in the content.
+    ///
+    /// # Arguments
+    ///
+    /// * `cmd` - Command and arguments to execute (e.g., `&["cat"]`)
+    /// * `stdin_content` - Content to pass via stdin
+    ///
+    /// # Errors
+    ///
+    /// Returns error if exec creation, stdin write, or execution fails.
+    pub async fn exec_with_stdin(
+        &self,
+        cmd: &[&str],
+        stdin_content: &str,
+    ) -> Result<ValidationResult> {
+        use tokio::io::AsyncWriteExt;
 
-        // Get exit code
-        let inspect = docker
-            .inspect_exec(&exec_id)
+        let docker = docker_client_instance()
             .await
-            .context("Failed to inspect exec")?;
-        let exit_code = inspect.exit_code.unwrap_or(-1);
+            .context("Failed to get Docker client")?;
 
-        Ok(ValidationResult {
-            exit_code,
-            stdout: String::from_utf8_lossy(&stdout).to_string(),
-            stderr: String::from_utf8_lossy(&stderr).to_string(),
-        })
+        let cmd_owned: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
+
+        let exec = docker
+            .create_exec(
+                &self.container_id,
+                CreateExecOptions {
+                    attach_stdin: Some(true),
+                    attach_stdout: Some(true),
+                    attach_stderr: Some(true),
+                    cmd: Some(cmd_owned),
+                    ..Default::default()
+                },
+            )
+            .await
+            .context("Failed to create exec")?;
+
+        let exec_id = exec.id;
+
+        let start_result = docker
+            .start_exec(&exec_id, Some(StartExecOptions::default()))
+            .await
+            .context("Failed to start exec")?;
+
+        let StartExecResults::Attached { output, mut input } = start_result else {
+            anyhow::bail!("Exec should be attached but wasn't");
+        };
+
+        // Write stdin content and close to signal EOF
+        input
+            .write_all(stdin_content.as_bytes())
+            .await
+            .context("Failed to write to stdin")?;
+        input.shutdown().await.context("Failed to close stdin")?;
+
+        collect_exec_output(&docker, &exec_id, output).await
     }
 
     /// Start a container without copying a validator script.

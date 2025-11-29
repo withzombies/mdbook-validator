@@ -69,7 +69,10 @@
 # [preprocessor.validator.validators.myvalidator]
 # container = "myimage:1.0.0"      # Specific tag, NEVER :latest
 # script = "validators/validate-myvalidator.sh"
-# exec_command = "sh -c 'mycommand \"$0\"'"  # $0 = code block content
+# # Content is passed via stdin - use cat to read it:
+# exec_command = "sh -c 'cat > /tmp/input.txt && mycommand /tmp/input.txt'"
+# # Or for tools that read stdin natively (like sqlite3):
+# exec_command = "mycommand --json"
 #
 # =============================================================================
 
