@@ -1,6 +1,6 @@
 # mdbook-validator Project Plan
 
-## Implementation Status Summary (Updated 2025-11-27)
+## Implementation Status Summary (Updated 2025-11-28)
 
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
@@ -10,8 +10,8 @@
 | 2 | Transpiler | ✅ COMPLETE | Marker stripping + @@ lines |
 | 3 | Configuration | ✅ COMPLETE | book.toml parsing, multi-validator |
 | 4 | Error Reporting | ✅ COMPLETE | Chapter/validator/exit code/stderr |
-| 5 | osquery Config | ❌ NOT STARTED | JSON config validation |
-| 6 | Shell Script Validators | ❌ NOT STARTED | ShellCheck + bash-exec |
+| 5 | osquery Config + Python | ✅ COMPLETE | osquery JSON config + Python syntax validation |
+| 6 | Shell Script Validators | ⚡ PARTIAL | ShellCheck complete, bash-exec NOT STARTED |
 | 7 | Performance | ⚡ PARTIAL | Container caching implemented |
 
 **Key Implementation Discoveries:**
@@ -22,7 +22,7 @@
 - Assertions implemented in validator scripts, not Rust (user-customizable)
 - **Host-based validation architecture**: Container runs query tool (osqueryi, sqlite3), JSON output piped to host validator script using local `jq` - simpler than installing jq in each container
 
-**Test Coverage:** 84 tests (10 osquery, 15 sqlite, 12 parser, 8 transpiler, 9 config, 7 container, 5 host_validator, 12 integration, 4 container_image, 2 prototype)
+**Test Coverage:** 97 tests (10 osquery, 5 osquery-config, 16 sqlite, 12 parser, 8 transpiler, 9 config, 9 container, 6 host_validator, 12 integration, 4 e2e, 4 container_image, 2 prototype)
 
 ---
 
@@ -427,32 +427,50 @@ drop(input);  // Close stdin to signal EOF
 
 ---
 
-### Phase 5: osquery Config Validation
-**Goal**: Add JSON config validation for osquery
+### Phase 5: osquery Config + Python Validation
+**Goal**: Add JSON config validation for osquery and Python syntax validation
 
-**STATUS: NOT STARTED**
+**STATUS: COMPLETE** (Implemented 2025-11-28)
 
 **IMPORTANT**: osquery configs are JSON, not TOML! From osquery docs:
 > "By default, osqueryd will look for a JSON file on disk... The filesystem plugin architecture expects config plugins to yield valid JSON."
 
-- [ ] Create JSON config validator script (validators/validate-osquery-config.sh)
-- [ ] Test with osquery config files using `osqueryd --config_check`
-- [ ] Add pyproject.toml validator (this one IS TOML, validated by validate-pyproject)
+- [x] Create JSON config validator script (validators/validate-osquery-config.sh)
+- [x] Test with osquery config files using `osqueryi --config_check`
+- [x] Handle osquery warnings (e.g., "Cannot set unknown") as errors for stricter validation
+- [x] Add Python syntax validator (validators/validate-python.sh) using py_compile
+- [ ] Add pyproject.toml validator (this one IS TOML, validated by validate-pyproject) - **DEFERRED**
 
-**Success Criteria**: Can validate osquery JSON configs and Python pyproject.toml files
+**Implementation Notes:**
+- osquery-config validator checks container stderr for "Cannot set unknown" warnings
+- Python validator uses `python3 -m py_compile` in container, checks for SyntaxError/IndentationError
+- Both have E2E tests in `tests/e2e_tests.rs`
+
+**Test Coverage**: 5 osquery-config tests, 1 Python E2E test
+
+**Success Criteria**: ✅ Can validate osquery JSON configs and Python syntax (pyproject.toml deferred)
 
 ### Phase 6: Shell Script Validators
 **Goal**: Add ShellCheck and bash execution validators
 
-**STATUS: NOT STARTED**
+**STATUS: PARTIAL** (ShellCheck complete, bash-exec NOT STARTED)
 
-- [ ] ShellCheck validator using `koalaman/shellcheck-alpine:v0.10.0` (NOT the scratch-based image)
+- [x] ShellCheck validator using `koalaman/shellcheck-alpine:stable` (NOT the scratch-based image)
+- [x] ShellCheck detects SC codes (e.g., SC2086 for unquoted variables) via container stderr
+- [x] E2E test verifies invalid scripts fail with expected SC codes
 - [ ] Bash execution validator with post-execution assertions
 - [ ] Support assertions: exit_code, file_exists, stdout_contains, etc.
 
 **Container note**: The base `koalaman/shellcheck` image is scratch-based with NO shell. Must use `shellcheck-alpine` variant which includes ash/bash.
 
-**Success Criteria**: Can validate shell scripts with both static analysis and execution
+**Implementation Notes:**
+- ShellCheck validator at `validators/validate-shellcheck.sh`
+- Checks container stderr for "In .* line N:" or "SC\d{4}" patterns
+- E2E test at `tests/e2e_tests.rs::e2e_invalid_shellcheck_fails_with_sc2086`
+
+**Test Coverage**: 1 ShellCheck E2E test
+
+**Success Criteria**: ✅ Can validate shell scripts with ShellCheck | ❌ Bash execution not yet implemented
 
 ---
 
@@ -1515,15 +1533,16 @@ impl ValidatorPreprocessor {
 For v1 release, we've succeeded if:
 
 1. ✅ osquery SQL queries validate against real osquery (catches schema drift)
-2. ❌ osquery JSON configs validate with config checker (Phase 5 - not started)
-3. ❌ pyproject.toml validates against PEP standards (Phase 5 - not started)
-4. ❌ Shell scripts pass ShellCheck analysis (Phase 6 - not started)
-5. ❌ Shell scripts run and pass execution assertions (Phase 6 - not started)
+2. ✅ osquery JSON configs validate with config checker (Phase 5 - complete)
+3. ❌ pyproject.toml validates against PEP standards (Phase 5 - deferred)
+4. ✅ Shell scripts pass ShellCheck analysis (Phase 6 - complete)
+5. ❌ Shell scripts run and pass execution assertions (Phase 6 - bash-exec not started)
 6. ✅ SQLite queries work with setup and assertions (Phase 1b - complete)
-7. ✅ Clear error messages show what failed and why
-8. ✅ Zero false positives (84 tests passing)
-9. ✅ Build fails when docs don't match tool behavior
-10. ❌ At least one external project adopts it (pending)
+7. ✅ Python syntax validation (py_compile) - bonus, not originally planned
+8. ✅ Clear error messages show what failed and why
+9. ✅ Zero false positives (97 tests passing)
+10. ✅ Build fails when docs don't match tool behavior
+11. ❌ At least one external project adopts it (pending)
 
 ## Resources
 
