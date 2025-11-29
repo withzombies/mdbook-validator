@@ -3,6 +3,8 @@
 //! Uses testcontainers async API to start containers and bollard
 //! for exec with environment variables.
 
+use std::sync::Arc;
+
 use anyhow::{Context, Result};
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
@@ -10,12 +12,14 @@ use futures_util::StreamExt;
 use testcontainers::core::client::docker_client_instance;
 use testcontainers::{runners::AsyncRunner, ContainerAsync, GenericImage, ImageExt};
 
+use crate::docker::{BollardDocker, DockerOperations};
+
 /// Collect stdout/stderr from an exec output stream and get the exit code.
 ///
 /// This is an internal helper used by both `exec_with_env` and `exec_raw` to avoid
 /// code duplication in output collection logic.
 async fn collect_exec_output(
-    docker: &bollard::Docker,
+    docker: &dyn DockerOperations,
     exec_id: &str,
     mut output: impl futures_util::Stream<Item = Result<LogOutput, bollard::errors::Error>> + Unpin,
 ) -> Result<ValidationResult> {
@@ -38,10 +42,7 @@ async fn collect_exec_output(
     }
 
     // Get exit code
-    let inspect = docker
-        .inspect_exec(exec_id)
-        .await
-        .context("Failed to inspect exec")?;
+    let inspect = docker.inspect_exec(exec_id).await?;
     let exit_code = inspect.exit_code.unwrap_or(-1);
 
     Ok(ValidationResult {
@@ -71,9 +72,33 @@ pub struct ValidatorContainer {
     /// Kept alive to prevent container cleanup (testcontainers drops on Drop)
     _container: ContainerAsync<GenericImage>,
     container_id: String,
+    /// Docker operations for exec calls (injected for testability)
+    docker: Arc<dyn DockerOperations>,
 }
 
 impl ValidatorContainer {
+    /// Create a `ValidatorContainer` with a custom Docker operations implementation.
+    ///
+    /// This constructor is primarily for testing error paths by injecting mock
+    /// Docker implementations. Production code should use `start_with_image`
+    /// or `start_raw` instead.
+    ///
+    /// # Arguments
+    ///
+    /// * `container` - The testcontainers async container
+    /// * `docker` - Docker operations implementation (use `BollardDocker` for production)
+    pub fn with_docker(
+        container: ContainerAsync<GenericImage>,
+        docker: Arc<dyn DockerOperations>,
+    ) -> Self {
+        let container_id = container.id().to_owned();
+        Self {
+            _container: container,
+            container_id,
+            docker,
+        }
+    }
+
     /// Start a new validator container with the given image and script.
     ///
     /// The script is copied to `/validate.sh` inside the container.
@@ -98,9 +123,17 @@ impl ValidatorContainer {
             .context("Failed to start container. Is Docker running?")?;
 
         let container_id = container.id().to_owned();
+
+        // Get Docker client and wrap it
+        let docker_client = docker_client_instance()
+            .await
+            .context("Failed to get Docker client")?;
+        let docker: Arc<dyn DockerOperations> = Arc::new(BollardDocker::new(docker_client));
+
         Ok(Self {
             _container: container,
             container_id,
+            docker,
         })
     }
 
@@ -134,10 +167,6 @@ impl ValidatorContainer {
         assertions: Option<&str>,
         expect: Option<&str>,
     ) -> Result<ValidationResult> {
-        let docker = docker_client_instance()
-            .await
-            .context("Failed to get Docker client")?;
-
         let mut env_vars = vec![format!("VALIDATOR_CONTENT={content}")];
         if let Some(s) = setup {
             env_vars.push(format!("VALIDATOR_SETUP={s}"));
@@ -149,7 +178,8 @@ impl ValidatorContainer {
             env_vars.push(format!("VALIDATOR_EXPECT={e}"));
         }
 
-        let exec = docker
+        let exec = self
+            .docker
             .create_exec(
                 &self.container_id,
                 CreateExecOptions {
@@ -160,21 +190,20 @@ impl ValidatorContainer {
                     ..Default::default()
                 },
             )
-            .await
-            .context("Failed to create exec")?;
+            .await?;
 
         let exec_id = exec.id;
 
-        let start_result = docker
+        let start_result = self
+            .docker
             .start_exec(&exec_id, Some(StartExecOptions::default()))
-            .await
-            .context("Failed to start exec")?;
+            .await?;
 
         let StartExecResults::Attached { output, .. } = start_result else {
             anyhow::bail!("Exec should be attached but wasn't");
         };
 
-        collect_exec_output(&docker, &exec_id, output).await
+        collect_exec_output(self.docker.as_ref(), &exec_id, output).await
     }
 
     /// Get the container ID
@@ -196,13 +225,10 @@ impl ValidatorContainer {
     ///
     /// Returns error if exec creation or execution fails.
     pub async fn exec_raw(&self, cmd: &[&str]) -> Result<ValidationResult> {
-        let docker = docker_client_instance()
-            .await
-            .context("Failed to get Docker client")?;
-
         let cmd_owned: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
 
-        let exec = docker
+        let exec = self
+            .docker
             .create_exec(
                 &self.container_id,
                 CreateExecOptions {
@@ -212,21 +238,20 @@ impl ValidatorContainer {
                     ..Default::default()
                 },
             )
-            .await
-            .context("Failed to create exec")?;
+            .await?;
 
         let exec_id = exec.id;
 
-        let start_result = docker
+        let start_result = self
+            .docker
             .start_exec(&exec_id, Some(StartExecOptions::default()))
-            .await
-            .context("Failed to start exec")?;
+            .await?;
 
         let StartExecResults::Attached { output, .. } = start_result else {
             anyhow::bail!("Exec should be attached but wasn't");
         };
 
-        collect_exec_output(&docker, &exec_id, output).await
+        collect_exec_output(self.docker.as_ref(), &exec_id, output).await
     }
 
     /// Execute a command in the container with stdin content.
@@ -249,13 +274,10 @@ impl ValidatorContainer {
     ) -> Result<ValidationResult> {
         use tokio::io::AsyncWriteExt;
 
-        let docker = docker_client_instance()
-            .await
-            .context("Failed to get Docker client")?;
-
         let cmd_owned: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
 
-        let exec = docker
+        let exec = self
+            .docker
             .create_exec(
                 &self.container_id,
                 CreateExecOptions {
@@ -266,15 +288,14 @@ impl ValidatorContainer {
                     ..Default::default()
                 },
             )
-            .await
-            .context("Failed to create exec")?;
+            .await?;
 
         let exec_id = exec.id;
 
-        let start_result = docker
+        let start_result = self
+            .docker
             .start_exec(&exec_id, Some(StartExecOptions::default()))
-            .await
-            .context("Failed to start exec")?;
+            .await?;
 
         let StartExecResults::Attached { output, mut input } = start_result else {
             anyhow::bail!("Exec should be attached but wasn't");
@@ -287,7 +308,7 @@ impl ValidatorContainer {
             .context("Failed to write to stdin")?;
         input.shutdown().await.context("Failed to close stdin")?;
 
-        collect_exec_output(&docker, &exec_id, output).await
+        collect_exec_output(self.docker.as_ref(), &exec_id, output).await
     }
 
     /// Start a container without copying a validator script.
@@ -344,9 +365,17 @@ impl ValidatorContainer {
         };
 
         let container_id = container.id().to_owned();
+
+        // Get Docker client and wrap it
+        let docker_client = docker_client_instance()
+            .await
+            .context("Failed to get Docker client")?;
+        let docker: Arc<dyn DockerOperations> = Arc::new(BollardDocker::new(docker_client));
+
         Ok(Self {
             _container: container,
             container_id,
+            docker,
         })
     }
 }
