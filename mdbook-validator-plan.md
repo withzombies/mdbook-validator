@@ -1,6 +1,6 @@
 # mdbook-validator Project Plan
 
-## Implementation Status Summary (Updated 2025-11-28)
+## Implementation Status Summary (Updated 2025-11-29)
 
 | Phase | Name | Status | Notes |
 |-------|------|--------|-------|
@@ -11,7 +11,7 @@
 | 3 | Configuration | ✅ COMPLETE | book.toml parsing, multi-validator |
 | 4 | Error Reporting | ✅ COMPLETE | Chapter/validator/exit code/stderr |
 | 5 | osquery Config + Python | ✅ COMPLETE | osquery JSON config + Python syntax validation |
-| 6 | Shell Script Validators | ⚡ PARTIAL | ShellCheck complete, bash-exec NOT STARTED |
+| 6 | Shell Script Validators | ✅ COMPLETE | ShellCheck + bash-exec with all 5 assertion types |
 | 7 | Performance | ⚡ PARTIAL | Container caching implemented |
 
 **Key Implementation Discoveries:**
@@ -22,7 +22,7 @@
 - Assertions implemented in validator scripts, not Rust (user-customizable)
 - **Host-based validation architecture**: Container runs query tool (osqueryi, sqlite3), JSON output piped to host validator script using local `jq` - simpler than installing jq in each container
 
-**Test Coverage:** 97 tests (10 osquery, 5 osquery-config, 16 sqlite, 12 parser, 8 transpiler, 9 config, 9 container, 6 host_validator, 12 integration, 4 e2e, 4 container_image, 2 prototype)
+**Test Coverage:** 155 tests (44 unit tests in src/, 111 integration tests in tests/)
 
 ---
 
@@ -453,13 +453,13 @@ drop(input);  // Close stdin to signal EOF
 ### Phase 6: Shell Script Validators
 **Goal**: Add ShellCheck and bash execution validators
 
-**STATUS: PARTIAL** (ShellCheck complete, bash-exec NOT STARTED)
+**STATUS: COMPLETE** (Implemented 2025-11-29)
 
 - [x] ShellCheck validator using `koalaman/shellcheck-alpine:stable` (NOT the scratch-based image)
 - [x] ShellCheck detects SC codes (e.g., SC2086 for unquoted variables) via container stderr
 - [x] E2E test verifies invalid scripts fail with expected SC codes
-- [ ] Bash execution validator with post-execution assertions
-- [ ] Support assertions: exit_code, file_exists, stdout_contains, etc.
+- [x] Bash execution validator with post-execution assertions
+- [x] Support assertions: exit_code, file_exists, stdout_contains, dir_exists, file_contains
 
 **Container note**: The base `koalaman/shellcheck` image is scratch-based with NO shell. Must use `shellcheck-alpine` variant which includes ash/bash.
 
@@ -467,10 +467,14 @@ drop(input);  // Close stdin to signal EOF
 - ShellCheck validator at `validators/validate-shellcheck.sh`
 - Checks container stderr for "In .* line N:" or "SC\d{4}" patterns
 - E2E test at `tests/e2e_tests.rs::e2e_invalid_shellcheck_fails_with_sc2086`
+- Bash-exec validator at `validators/validate-bash-exec.sh` (132 lines)
+- Bash-exec outputs JSON: `{"exit_code": N, "stdout": "...", "stderr": "...", "files": {...}}`
+- 14 unit tests in `tests/bash_exec_validator_tests.rs`
+- E2E examples in `tests/fixtures/e2e-book/src/bash-examples.md`
 
-**Test Coverage**: 1 ShellCheck E2E test
+**Test Coverage**: 1 ShellCheck E2E test, 14 bash-exec unit tests
 
-**Success Criteria**: ✅ Can validate shell scripts with ShellCheck | ❌ Bash execution not yet implemented
+**Success Criteria**: ✅ Can validate shell scripts with ShellCheck | ✅ Bash execution with all 5 assertion types
 
 ---
 
@@ -1536,11 +1540,11 @@ For v1 release, we've succeeded if:
 2. ✅ osquery JSON configs validate with config checker (Phase 5 - complete)
 3. ❌ pyproject.toml validates against PEP standards (Phase 5 - deferred)
 4. ✅ Shell scripts pass ShellCheck analysis (Phase 6 - complete)
-5. ❌ Shell scripts run and pass execution assertions (Phase 6 - bash-exec not started)
+5. ✅ Shell scripts run and pass execution assertions (Phase 6 - bash-exec complete with 14 tests)
 6. ✅ SQLite queries work with setup and assertions (Phase 1b - complete)
 7. ✅ Python syntax validation (py_compile) - bonus, not originally planned
 8. ✅ Clear error messages show what failed and why
-9. ✅ Zero false positives (97 tests passing)
+9. ✅ Zero false positives (155 tests passing)
 10. ✅ Build fails when docs don't match tool behavior
 11. ❌ At least one external project adopts it (pending)
 

@@ -5,6 +5,12 @@ edition = "2021"
 rust-version = "1.75.0"
 description = "An mdBook preprocessor that validates code blocks using Docker containers"
 license = "Apache-2.0"
+authors = ["Ryan Stortz <ryan@withzombies.com>"]
+repository = "https://github.com/withzombies/mdbook-validator"
+homepage = "https://github.com/withzombies/mdbook-validator"
+readme = "README.md"
+keywords = ["mdbook", "validation", "documentation", "docker", "testing"]
+categories = ["development-tools::build-utils", "development-tools::testing"]
 
 [dependencies]
 mdbook = "0.4"
@@ -12,7 +18,6 @@ anyhow = "1.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 pulldown-cmark = "0.13"
-pulldown-cmark-to-cmark = "21"
 testcontainers = "0.23"
 bollard = "0.18"
 tokio = { version = "1", features = ["rt", "macros"] }

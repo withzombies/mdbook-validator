@@ -1,6 +1,6 @@
 # mdbook-validator
 
-> **Status: Design Phase** - This tool doesn't exist yet. This document describes what we're building.
+> **Status: v1.0** - Production ready. All validators implemented with 155 passing tests.
 
 An mdBook preprocessor that validates code examples against live Docker containers during documentation builds. Catch documentation drift before it reaches your users.
 
@@ -31,13 +31,17 @@ You only find out when a user complains.
 
 ## Installation
 
-*Not yet available. Once implemented:*
-
 ```bash
+# From crates.io (once published)
 cargo install mdbook-validator
+
+# From source
+cargo install --git https://github.com/withzombies/mdbook-validator
 ```
 
-Requires Docker to be running.
+**Requirements:**
+- Docker running (containers provide validation environments)
+- `jq` installed on host (used by validator scripts for JSON parsing)
 
 ## Quick Start
 
@@ -49,7 +53,7 @@ command = "mdbook-validator"
 
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
-validate-command = "/validators/validate-sqlite.sh"
+script = "validators/validate-sqlite.sh"
 ```
 
 2. Write validated examples in your markdown:
@@ -263,32 +267,32 @@ fail-fast = true  # Stop on first failure (default: true)
 # SQLite validator
 [preprocessor.validator.validators.sqlite]
 container = "keinos/sqlite3:3.47.2"
-validate-command = "/validators/validate-sqlite.sh"
+script = "validators/validate-sqlite.sh"
 
 # osquery SQL validator
 [preprocessor.validator.validators.osquery]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
-validate-command = "/validators/validate-osquery.sh"
+script = "validators/validate-osquery.sh"
 
 # osquery config validator (JSON, not TOML!)
 [preprocessor.validator.validators.osquery-config]
 container = "osquery/osquery:5.17.0-ubuntu22.04"
-validate-command = "/validators/validate-osquery-config.sh"
+script = "validators/validate-osquery-config.sh"
 
 # ShellCheck static analysis
 [preprocessor.validator.validators.shellcheck]
 container = "koalaman/shellcheck-alpine:stable"
-validate-command = "/validators/validate-shellcheck.sh"
+script = "validators/validate-shellcheck.sh"
 
 # Bash execution with assertions
 [preprocessor.validator.validators.bash-exec]
 container = "ubuntu:22.04"
-validate-command = "/validators/validate-bash-exec.sh"
+script = "validators/validate-bash-exec.sh"
 
 # Python syntax validation
 [preprocessor.validator.validators.python]
 container = "python:3.12-slim"
-validate-command = "/validators/validate-python.sh"
+script = "validators/validate-python.sh"
 ```
 
 ## Custom Docker Images
@@ -307,7 +311,7 @@ docker build -t my-validator:latest validators/myvalidator/
 ```toml
 [preprocessor.validator.validators.custom]
 container = "my-validator:latest"  # Local image, no registry needed
-validate-command = "/validate.sh"
+script = "validators/validate-custom.sh"
 ```
 
 testcontainers-rs uses local images if they exist, no pulling required.
@@ -323,7 +327,7 @@ docker push registry.mycompany.com/my-validator:latest
 ```toml
 [preprocessor.validator.validators.custom]
 container = "registry.mycompany.com/my-validator:latest"
-validate-command = "/validate.sh"
+script = "validators/validate-custom.sh"
 ```
 
 Docker uses your logged-in credentials (`docker login`).
@@ -357,7 +361,7 @@ docker build -t pyproject-validator:latest validators/pyproject/
 ```toml
 [preprocessor.validator.validators.pyproject]
 container = "pyproject-validator:latest"
-validate-command = "/validate.sh"
+script = "validators/validate-custom.sh"
 ```
 
 ## Writing Custom Validators

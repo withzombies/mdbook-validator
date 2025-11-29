@@ -86,3 +86,156 @@ fn extract_marker_block(content: &str, marker: &str) -> Option<(String, String, 
 
     Some((before.to_owned(), inner.to_owned(), after.to_owned()))
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // ==================== parse_info_string tests ====================
+
+    #[test]
+    fn parse_info_string_language_only() {
+        let (lang, validator, skip) = parse_info_string("sql");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, None);
+        assert!(!skip);
+    }
+
+    #[test]
+    fn parse_info_string_with_validator() {
+        let (lang, validator, skip) = parse_info_string("sql validator=sqlite");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("sqlite".to_owned()));
+        assert!(!skip);
+    }
+
+    #[test]
+    fn parse_info_string_with_skip() {
+        let (lang, validator, skip) = parse_info_string("sql validator=osquery skip");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("osquery".to_owned()));
+        assert!(skip);
+    }
+
+    #[test]
+    fn parse_info_string_skip_without_validator() {
+        let (lang, validator, skip) = parse_info_string("bash skip");
+        assert_eq!(lang, "bash");
+        assert_eq!(validator, None);
+        assert!(skip);
+    }
+
+    #[test]
+    fn parse_info_string_empty() {
+        let (lang, validator, skip) = parse_info_string("");
+        assert_eq!(lang, "");
+        assert_eq!(validator, None);
+        assert!(!skip);
+    }
+
+    #[test]
+    fn parse_info_string_extra_whitespace() {
+        let (lang, validator, skip) = parse_info_string("  sql   validator=sqlite   skip  ");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("sqlite".to_owned()));
+        assert!(skip);
+    }
+
+    #[test]
+    fn parse_info_string_empty_validator_ignored() {
+        let (lang, validator, skip) = parse_info_string("sql validator=");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, None); // Empty validator is filtered out
+        assert!(!skip);
+    }
+
+    #[test]
+    fn parse_info_string_multiple_validators_takes_first() {
+        let (lang, validator, skip) = parse_info_string("sql validator=first validator=second");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("first".to_owned()));
+        assert!(!skip);
+    }
+
+    // ==================== extract_markers tests ====================
+
+    #[test]
+    fn extract_markers_setup_only() {
+        let content = "<!--SETUP\nCREATE TABLE test;\n-->\nSELECT * FROM test;";
+        let result = extract_markers(content);
+        assert_eq!(result.setup, Some("CREATE TABLE test;".to_owned()));
+        assert_eq!(result.assertions, None);
+        assert_eq!(result.expect, None);
+        assert_eq!(result.visible_content, "SELECT * FROM test;");
+    }
+
+    #[test]
+    fn extract_markers_assert_only() {
+        let content = "SELECT * FROM test;\n<!--ASSERT\nrows >= 1\n-->";
+        let result = extract_markers(content);
+        assert_eq!(result.setup, None);
+        assert_eq!(result.assertions, Some("rows >= 1".to_owned()));
+        assert_eq!(result.expect, None);
+        assert_eq!(result.visible_content, "SELECT * FROM test;");
+    }
+
+    #[test]
+    fn extract_markers_expect_only() {
+        let content = "SELECT 1;\n<!--EXPECT\n[{\"1\": 1}]\n-->";
+        let result = extract_markers(content);
+        assert_eq!(result.setup, None);
+        assert_eq!(result.assertions, None);
+        assert_eq!(result.expect, Some("[{\"1\": 1}]".to_owned()));
+        assert_eq!(result.visible_content, "SELECT 1;");
+    }
+
+    #[test]
+    fn extract_markers_all_three() {
+        let content = "<!--SETUP\nCREATE TABLE t;\n-->\nSELECT * FROM t;\n<!--ASSERT\nrows = 0\n-->\n<!--EXPECT\n[]\n-->";
+        let result = extract_markers(content);
+        assert_eq!(result.setup, Some("CREATE TABLE t;".to_owned()));
+        assert_eq!(result.assertions, Some("rows = 0".to_owned()));
+        assert_eq!(result.expect, Some("[]".to_owned()));
+        assert_eq!(result.visible_content, "SELECT * FROM t;");
+    }
+
+    #[test]
+    fn extract_markers_none() {
+        let content = "SELECT * FROM users;";
+        let result = extract_markers(content);
+        assert_eq!(result.setup, None);
+        assert_eq!(result.assertions, None);
+        assert_eq!(result.expect, None);
+        assert_eq!(result.visible_content, "SELECT * FROM users;");
+    }
+
+    #[test]
+    fn extract_markers_multiline_setup() {
+        let content = "<!--SETUP\nCREATE TABLE t (id INT);\nINSERT INTO t VALUES (1);\nINSERT INTO t VALUES (2);\n-->\nSELECT * FROM t;";
+        let result = extract_markers(content);
+        assert!(result.setup.is_some());
+        let setup = result.setup.unwrap();
+        assert!(setup.contains("CREATE TABLE"));
+        assert!(setup.contains("INSERT INTO t VALUES (1)"));
+        assert!(setup.contains("INSERT INTO t VALUES (2)"));
+    }
+
+    #[test]
+    fn extract_markers_multiline_assertions() {
+        let content = "SELECT * FROM t;\n<!--ASSERT\nrows >= 1\ncontains \"foo\"\n-->";
+        let result = extract_markers(content);
+        assert!(result.assertions.is_some());
+        let assertions = result.assertions.unwrap();
+        assert!(assertions.contains("rows >= 1"));
+        assert!(assertions.contains("contains \"foo\""));
+    }
+
+    #[test]
+    fn extract_markers_preserves_visible_content_order() {
+        let content = "-- First line\n<!--SETUP\nsetup;\n-->\n-- Second line\nSELECT 1;";
+        let result = extract_markers(content);
+        assert!(result.visible_content.contains("First line"));
+        assert!(result.visible_content.contains("Second line"));
+        assert!(result.visible_content.contains("SELECT 1"));
+    }
+}

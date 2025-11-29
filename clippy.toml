@@ -1,6 +1,9 @@
 # Clippy configuration for mdbook-validator
+#
+# These settings apply to unit tests (code marked #[cfg(test)] or #[test]).
+# Integration tests in tests/ still need #![allow(...)] attributes.
 
-# Allow panic-related patterns in tests
+# Allow unwrap/expect/indexing in unit tests
 allow-unwrap-in-tests = true
 allow-expect-in-tests = true
 allow-indexing-slicing-in-tests = true
