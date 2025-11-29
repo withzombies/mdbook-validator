@@ -14,6 +14,7 @@
     clippy::cast_possible_truncation
 )]
 
+use mdbook_validator::command::RealCommandRunner;
 use mdbook_validator::container::ValidatorContainer;
 use mdbook_validator::host_validator;
 
@@ -88,7 +89,9 @@ async fn run_sqlite_validator(
     }
 
     // Validate JSON output on host
+    let runner = RealCommandRunner;
     let validation_result = host_validator::run_validator(
+        &runner,
         VALIDATOR_SCRIPT,
         &query_result.stdout,
         assertions,

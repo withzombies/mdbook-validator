@@ -3,9 +3,9 @@
 //! Runs validator scripts on the host machine, enabling use of jq
 //! and other host tools for JSON parsing.
 
-use anyhow::{Context, Result};
-use std::io::Write;
-use std::process::{Command, Stdio};
+use anyhow::Result;
+
+use crate::command::CommandRunner;
 
 /// Result of running a host validator
 #[derive(Debug)]
@@ -23,6 +23,7 @@ pub struct HostValidationResult {
 ///
 /// # Arguments
 ///
+/// * `runner` - Command runner for executing scripts (enables mocking)
 /// * `script_path` - Path to validator script (e.g., "validators/validate-sqlite.sh")
 /// * `json_input` - JSON output from container to validate
 /// * `assertions` - Optional assertion rules
@@ -32,44 +33,28 @@ pub struct HostValidationResult {
 /// # Errors
 ///
 /// Returns error if the validator script cannot be spawned or if stdin write fails.
-pub fn run_validator(
+pub fn run_validator<R: CommandRunner>(
+    runner: &R,
     script_path: &str,
     json_input: &str,
     assertions: Option<&str>,
     expect: Option<&str>,
     container_stderr: Option<&str>,
 ) -> Result<HostValidationResult> {
-    let mut cmd = Command::new("sh");
-    cmd.arg(script_path)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::piped());
+    // Build environment variables
+    let mut env_vars: Vec<(&str, &str)> = Vec::new();
 
-    // Set env vars for assertions
     if let Some(a) = assertions {
-        cmd.env("VALIDATOR_ASSERTIONS", a);
+        env_vars.push(("VALIDATOR_ASSERTIONS", a));
     }
     if let Some(e) = expect {
-        cmd.env("VALIDATOR_EXPECT", e);
+        env_vars.push(("VALIDATOR_EXPECT", e));
     }
     if let Some(stderr) = container_stderr {
-        cmd.env("VALIDATOR_CONTAINER_STDERR", stderr);
+        env_vars.push(("VALIDATOR_CONTAINER_STDERR", stderr));
     }
 
-    let mut child = cmd
-        .spawn()
-        .with_context(|| format!("Failed to spawn validator: {script_path}"))?;
-
-    // Write JSON to stdin
-    if let Some(mut stdin) = child.stdin.take() {
-        stdin
-            .write_all(json_input.as_bytes())
-            .context("Failed to write JSON to validator stdin")?;
-    }
-
-    let output = child
-        .wait_with_output()
-        .context("Failed to wait for validator")?;
+    let output = runner.run_script(script_path, json_input, &env_vars)?;
 
     Ok(HostValidationResult {
         exit_code: output.status.code().unwrap_or(-1),

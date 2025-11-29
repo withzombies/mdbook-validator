@@ -15,6 +15,7 @@
     clippy::doc_markdown
 )]
 
+use mdbook_validator::command::RealCommandRunner;
 use mdbook_validator::container::ValidatorContainer;
 use mdbook_validator::host_validator;
 
@@ -137,7 +138,9 @@ async fn run_bash_exec_validator(
     println!("Container stderr: {}", result.stderr);
 
     // Validate JSON output on host
+    let runner = RealCommandRunner;
     let validation_result = host_validator::run_validator(
+        &runner,
         VALIDATOR_SCRIPT,
         &result.stdout,
         assertions,

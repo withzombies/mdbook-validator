@@ -17,6 +17,7 @@ use mdbook::errors::Error;
 use mdbook::preprocess::{Preprocessor, PreprocessorContext};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
+use crate::command::RealCommandRunner;
 use crate::config::{Config, ValidatorConfig};
 use crate::container::ValidatorContainer;
 use crate::host_validator;
@@ -385,6 +386,7 @@ impl ValidatorPreprocessor {
             .ok_or_else(|| Error::msg(format!("Invalid script path: {}", script_path.display())))?;
 
         let validation_result = host_validator::run_validator(
+            &RealCommandRunner,
             script_path_str,
             &query_result.stdout,
             block.markers.assertions.as_deref(),

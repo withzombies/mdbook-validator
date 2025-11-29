@@ -28,6 +28,7 @@ toml = "0.5"
 
 [dev-dependencies]
 cargo-husky = { version = "1.5", features = ["precommit-hook", "run-cargo-clippy", "run-cargo-fmt"] }
+mockall = "0.13"
 tempfile = "3"
 
 [lints.clippy]
