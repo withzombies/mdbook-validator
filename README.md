@@ -182,6 +182,44 @@ SELECT COUNT(*) as total FROM test
 ```
 ````
 
+### Bash Script Execution
+
+Validate bash scripts run correctly and produce expected results:
+
+````markdown
+```bash validator=bash-exec
+#!/bin/bash
+echo "Hello from bash"
+exit 0
+```
+````
+
+Scripts must exit 0 by default. Use `exit_code` assertion for non-zero:
+
+````markdown
+```bash validator=bash-exec
+exit 42
+<!--ASSERT
+exit_code = 42
+-->
+```
+````
+
+Check file creation and content:
+
+````markdown
+```bash validator=bash-exec
+mkdir -p /tmp/myapp
+echo "config=value" > /tmp/myapp/settings.conf
+<!--ASSERT
+dir_exists /tmp/myapp
+file_exists /tmp/myapp/settings.conf
+file_contains /tmp/myapp/settings.conf "config=value"
+stdout_contains ""
+-->
+```
+````
+
 ### Skip Validation
 
 ````markdown
@@ -193,15 +231,24 @@ SELECT * FROM nonexistent_table;
 
 ## Assertions
 
+### SQL Validators (osquery, sqlite)
+
 | Assertion | Example | Description |
 |-----------|---------|-------------|
 | `rows = N` | `rows = 5` | Exact row count |
 | `rows >= N` | `rows >= 1` | Minimum row count |
 | `contains "str"` | `contains "alice"` | Output contains string |
 | `matches "regex"` | `matches "user.*"` | Regex pattern match |
-| `exit_code = N` | `exit_code = 0` | Script exit code |
-| `file_exists` | `file_exists /etc/app.conf` | File was created |
-| `stdout_contains` | `stdout_contains "success"` | Stdout has text |
+
+### Bash Execution (bash-exec)
+
+| Assertion | Example | Description |
+|-----------|---------|-------------|
+| `exit_code = N` | `exit_code = 0` | Script must exit with code N (default: 0) |
+| `stdout_contains "str"` | `stdout_contains "success"` | Stdout must contain string |
+| `file_exists /path` | `file_exists /tmp/config` | File must exist after script |
+| `dir_exists /path` | `dir_exists /tmp/mydir` | Directory must exist after script |
+| `file_contains /path "str"` | `file_contains /tmp/cfg "key=val"` | File must contain string |
 
 ## Configuration
 
@@ -237,6 +284,11 @@ validate-command = "/validators/validate-shellcheck.sh"
 [preprocessor.validator.validators.bash-exec]
 container = "ubuntu:22.04"
 validate-command = "/validators/validate-bash-exec.sh"
+
+# Python syntax validation
+[preprocessor.validator.validators.python]
+container = "python:3.12-slim"
+validate-command = "/validators/validate-python.sh"
 ```
 
 ## Custom Docker Images

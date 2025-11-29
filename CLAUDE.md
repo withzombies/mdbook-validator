@@ -60,6 +60,8 @@ Documentation code examples rot. SQL queries reference non-existent tables, conf
   - `osquery/osquery:5.17.0-ubuntu22.04` - osquery SQL and JSON config validation
   - `keinos/sqlite3:3.47.2` - SQLite validation with setup support
   - `koalaman/shellcheck-alpine:stable` - shell script static analysis
+  - `ubuntu:22.04` - bash script execution with file system assertions
+  - `python:3.12-slim` - Python syntax validation
 
 ## Project Status
 
@@ -187,6 +189,10 @@ validators/
   validate-osquery.sh        - osquery SQL validator (runs on HOST, uses jq)
   validate-osquery-config.sh - osquery JSON config validator (runs on HOST)
   validate-sqlite.sh         - SQLite validator (runs on HOST, uses jq for assertions)
+  validate-bash-exec.sh      - Bash script execution validator (runs on HOST, checks exit code, stdout, files)
+  validate-shellcheck.sh     - Shell script static analysis (runs on HOST)
+  validate-python.sh         - Python syntax validator (runs on HOST)
+  validate-template.sh       - Template for creating new validators
 ```
 
 ## Code Block Annotation Syntax
@@ -274,6 +280,81 @@ SELECT id FROM test ORDER BY id
 -->
 ```
 ````
+
+### Bash Execution Examples (bash-exec)
+
+The bash-exec validator runs bash scripts in a container and validates execution results. Unlike other validators that check query output, bash-exec validates exit codes, stdout content, and file system state.
+
+**Default behavior**: Scripts must exit with code 0 unless `exit_code` assertion specifies otherwise.
+
+Basic script (validates exit 0):
+````markdown
+```bash validator=bash-exec
+#!/bin/bash
+echo "hello world"
+exit 0
+```
+````
+
+With exit code assertion (allows non-zero):
+````markdown
+```bash validator=bash-exec
+#!/bin/bash
+exit 42
+<!--ASSERT
+exit_code = 42
+-->
+```
+````
+
+With stdout assertion:
+````markdown
+```bash validator=bash-exec
+echo "deployment successful"
+<!--ASSERT
+stdout_contains "successful"
+-->
+```
+````
+
+With file system assertions:
+````markdown
+```bash validator=bash-exec
+mkdir -p /tmp/myapp
+echo "config=value" > /tmp/myapp/config.txt
+<!--ASSERT
+dir_exists /tmp/myapp
+file_exists /tmp/myapp/config.txt
+file_contains /tmp/myapp/config.txt "config=value"
+-->
+```
+````
+
+With SETUP block (for test data):
+````markdown
+```bash validator=bash-exec
+<!--SETUP
+mkdir -p /tmp/data
+echo "test content" > /tmp/data/input.txt
+-->
+cat /tmp/data/input.txt
+<!--ASSERT
+stdout_contains "test content"
+-->
+```
+````
+
+**Bash-exec Assertion Types:**
+
+| Assertion | Example | Description |
+|-----------|---------|-------------|
+| `exit_code = N` | `exit_code = 0` | Script must exit with code N |
+| `stdout_contains "str"` | `stdout_contains "success"` | Stdout must contain string |
+| `file_exists /path` | `file_exists /tmp/config` | File must exist after script runs |
+| `dir_exists /path` | `dir_exists /tmp/mydir` | Directory must exist after script runs |
+| `file_contains /path "str"` | `file_contains /tmp/config "key=val"` | File must contain string |
+
+**Key difference from shellcheck**: shellcheck does static analysis (syntax/style checking). bash-exec actually **runs** the script and validates runtime behavior.
 
 ## Validator Script Contract (Host-Based)
 
@@ -365,6 +446,18 @@ container = "keinos/sqlite3:3.47.2"
 script = "validators/validate-sqlite.sh"  # Runs on HOST with jq
 # Optional: Override default exec command (default shown)
 # exec_command = "sqlite3 -json /tmp/test.db"
+
+[preprocessor.validator.validators.bash-exec]
+container = "ubuntu:22.04"
+script = "validators/validate-bash-exec.sh"  # Runs on HOST, checks exit code/stdout/files
+
+[preprocessor.validator.validators.shellcheck]
+container = "koalaman/shellcheck-alpine:stable"
+script = "validators/validate-shellcheck.sh"  # Static analysis, runs on HOST
+
+[preprocessor.validator.validators.python]
+container = "python:3.12-slim"
+script = "validators/validate-python.sh"  # Syntax check, runs on HOST
 ```
 
 **Config fields:**
