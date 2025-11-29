@@ -358,7 +358,10 @@ impl ValidatorPreprocessor {
             )));
         }
 
-        let cmd = format!("{exec_cmd} \"{query_sql}\"");
+        // Escape content for shell: use single quotes with internal single quotes escaped
+        // as '\'' (end quote, escaped quote, start quote)
+        let escaped_content = query_sql.replace('\'', "'\\''");
+        let cmd = format!("{exec_cmd} '{escaped_content}'");
         let query_result = container
             .exec_raw(&["sh", "-c", &cmd])
             .await
