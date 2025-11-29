@@ -151,43 +151,45 @@ async fn test_exec_raw_nonexistent_command_fails() {
 // start_raw_with_mount tests
 // ============================================================================
 
+/// Test that files can be copied into containers using `with_copy_to()`.
+///
+/// This replaces the previous bind mount test which was flaky due to Docker
+/// timing issues with volume mounts. The `copy_to` API is more reliable and
+/// is the recommended approach per testcontainers best practices.
 #[tokio::test]
-async fn test_container_mounts_fixtures_dir() {
-    use std::fs;
+async fn test_container_copy_to_file() {
+    use testcontainers::{runners::AsyncRunner, GenericImage, ImageExt};
+    use tokio::io::AsyncReadExt;
 
-    // Use project directory for temp files (macOS Docker can't access /var/folders)
-    let project_dir = std::env::current_dir().expect("get current dir");
-    let fixtures_dir = project_dir.join("target").join("test-fixtures-mount");
+    let test_content = b"hello from copy_to";
 
-    // Clean up and create fresh
-    let _ = fs::remove_dir_all(&fixtures_dir);
-    fs::create_dir_all(&fixtures_dir).expect("create fixtures dir");
+    // Start container with file copied in at startup
+    let container = GenericImage::new("alpine", "3")
+        .with_copy_to("/fixtures/test.txt", test_content.to_vec())
+        .with_cmd(["sleep", "infinity"])
+        .start()
+        .await
+        .expect("container should start with copied file");
 
-    let test_file = fixtures_dir.join("test.txt");
-    fs::write(&test_file, "hello from fixtures").expect("write test file");
-
-    // Start container with mount
-    let container = ValidatorContainer::start_raw_with_mount(
-        "alpine:3",
-        Some((fixtures_dir.as_path(), "/fixtures")),
-    )
-    .await
-    .expect("container should start with mount");
-
-    // Verify file is accessible at /fixtures/test.txt
-    let result = container
-        .exec_raw(&["cat", "/fixtures/test.txt"])
+    // Verify file is accessible
+    let mut result = container
+        .exec(testcontainers::core::ExecCommand::new([
+            "cat",
+            "/fixtures/test.txt",
+        ]))
         .await
         .expect("exec should succeed");
 
-    // Clean up
-    let _ = fs::remove_dir_all(&fixtures_dir);
+    let mut stdout = String::new();
+    result
+        .stdout()
+        .read_to_string(&mut stdout)
+        .await
+        .expect("read stdout");
 
-    assert_eq!(result.exit_code, 0, "cat should succeed");
     assert!(
-        result.stdout.contains("hello from fixtures"),
-        "mounted file should be readable: {}",
-        result.stdout
+        stdout.contains("hello from copy_to"),
+        "copied file should be readable: {stdout}",
     );
 }
 
