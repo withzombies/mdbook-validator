@@ -20,6 +20,11 @@
 
 set -e
 
+# Validate that a string is an integer (positive or negative)
+is_integer() {
+    [[ "$1" =~ ^-?[0-9]+$ ]]
+}
+
 # Check jq is available
 command -v jq >/dev/null 2>&1 || {
     echo "ERROR: jq is required but not installed" >&2
@@ -56,6 +61,10 @@ if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
             exit_code\ =\ *)
                 HAS_EXIT_CODE_ASSERTION=true
                 expected=${assertion#exit_code = }
+                if ! is_integer "$expected"; then
+                    echo "Assertion failed: exit_code = $expected: invalid integer" >&2
+                    exit 1
+                fi
                 if [ "$EXIT_CODE" -ne "$expected" ]; then
                     echo "Assertion failed: exit_code = $expected: got $EXIT_CODE" >&2
                     if [ -n "$STDERR" ]; then

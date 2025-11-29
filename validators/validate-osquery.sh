@@ -15,6 +15,11 @@
 
 set -e
 
+# Validate that a string is an integer (positive or negative)
+is_integer() {
+    [[ "$1" =~ ^-?[0-9]+$ ]]
+}
+
 # Check jq is available
 command -v jq >/dev/null 2>&1 || {
     echo "ERROR: jq is required but not installed" >&2
@@ -43,6 +48,10 @@ if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
         case "$assertion" in
             rows\ =\ *)
                 expected=${assertion#rows = }
+                if ! is_integer "$expected"; then
+                    echo "Assertion failed: rows = $expected: invalid integer" >&2
+                    exit 1
+                fi
                 actual=$(echo "$JSON_INPUT" | jq 'length')
                 if [ "$actual" -ne "$expected" ]; then
                     echo "Assertion failed: rows = $expected: got $actual" >&2
@@ -51,6 +60,10 @@ if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
                 ;;
             rows\ \>=\ *)
                 expected=${assertion#rows >= }
+                if ! is_integer "$expected"; then
+                    echo "Assertion failed: rows >= $expected: invalid integer" >&2
+                    exit 1
+                fi
                 actual=$(echo "$JSON_INPUT" | jq 'length')
                 if [ "$actual" -lt "$expected" ]; then
                     echo "Assertion failed: rows >= $expected: got $actual" >&2
@@ -59,6 +72,10 @@ if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
                 ;;
             rows\ \>\ *)
                 expected=${assertion#rows > }
+                if ! is_integer "$expected"; then
+                    echo "Assertion failed: rows > $expected: invalid integer" >&2
+                    exit 1
+                fi
                 actual=$(echo "$JSON_INPUT" | jq 'length')
                 if [ "$actual" -le "$expected" ]; then
                     echo "Assertion failed: rows > $expected: got $actual" >&2
@@ -67,6 +84,10 @@ if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
                 ;;
             columns\ =\ *)
                 expected=${assertion#columns = }
+                if ! is_integer "$expected"; then
+                    echo "Assertion failed: columns = $expected: invalid integer" >&2
+                    exit 1
+                fi
                 # Handle empty array case - columns = 0 for empty results
                 actual=$(echo "$JSON_INPUT" | jq 'if length == 0 then 0 else (.[0] | keys | length) end')
                 if [ "$actual" -ne "$expected" ]; then
