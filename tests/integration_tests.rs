@@ -12,8 +12,29 @@
 
 use mdbook::book::{Book, BookItem, Chapter};
 use mdbook::preprocess::Preprocessor;
+use mdbook_validator::config::{Config, ValidatorConfig};
 use mdbook_validator::ValidatorPreprocessor;
+use std::collections::HashMap;
 use std::path::PathBuf;
+
+/// Creates a test config with sqlite validator
+fn create_sqlite_config() -> Config {
+    let mut validators = HashMap::new();
+    validators.insert(
+        "sqlite".to_string(),
+        ValidatorConfig {
+            container: "keinos/sqlite3:3.47.2".to_string(),
+            script: PathBuf::from("validators/validate-sqlite.sh"),
+            exec_command: Some("sqlite3 -json /tmp/test.db".to_string()),
+        },
+    );
+
+    Config {
+        validators,
+        fail_fast: true,
+        fixtures_dir: None,
+    }
+}
 
 #[test]
 fn preprocessor_has_correct_name() {
@@ -55,13 +76,16 @@ fn create_book_with_content(chapter_content: &str) -> Book {
 /// This test requires Docker to be running.
 #[test]
 fn preprocessor_validates_and_strips_markers() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let chapter_content = r"# Test Chapter
 
 Some introductory text.
 
-```sql validator=test
+```sql validator=sqlite
 <!--SETUP
-CREATE TABLE test;
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS test(id INTEGER);'
 -->
 SELECT 1;
 <!--ASSERT
@@ -75,8 +99,8 @@ More text after.
     let book = create_book_with_content(chapter_content);
     let preprocessor = ValidatorPreprocessor::new();
 
-    // Run preprocessor using process_book (bypasses context requirement)
-    let result = preprocessor.process_book(book);
+    // Run preprocessor using process_book_with_config (uses real sqlite validator)
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     match result {
         Ok(processed_book) => {
@@ -111,7 +135,7 @@ More text after.
                 "Visible content should remain. Output:\n{output}"
             );
             assert!(
-                output.contains("validator=test"),
+                output.contains("validator=sqlite"),
                 "Code block info should remain. Output:\n{output}"
             );
 
@@ -126,6 +150,9 @@ More text after.
 /// Test: Preprocessor handles chapters with no validator blocks
 #[test]
 fn preprocessor_handles_no_validator_blocks() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let chapter_content = r#"# Test Chapter
 
 Just some text.
@@ -140,7 +167,8 @@ fn main() {
     let book = create_book_with_content(chapter_content);
     let preprocessor = ValidatorPreprocessor::new();
 
-    let result = preprocessor.process_book(book);
+    // No validator blocks means no validation runs, but we still use process_book_with_config
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     match result {
         Ok(_) => {
@@ -197,22 +225,31 @@ SELECT 1;
     }
 }
 
-/// Test: Preprocessor strips @@ hidden lines
+/// Test: Preprocessor strips @@ hidden lines from OUTPUT
+///
+/// Note: The @@ feature strips lines from rendered output. This test uses
+/// `process_book_with_script` (not a real validator) because the @@ stripping
+/// for validation input is a separate feature that needs implementation.
+/// This test verifies OUTPUT stripping works correctly.
 #[test]
-fn preprocessor_strips_hidden_lines() {
+fn preprocessor_strips_hidden_lines_from_output() {
+    // Use process_book_with_script with a passing script to test output stripping
+    // without needing the full @@ validation stripping implementation
+    let passing_script = b"#!/bin/sh\nexit 0\n";
+
     let chapter_content = r"# Test Chapter
 
 ```sql validator=test
-@@CREATE TABLE hidden;
-SELECT visible;
-@@DROP TABLE hidden;
+@@SELECT 'hidden_setup' as setup;
+SELECT 'visible' as result;
+@@SELECT 'hidden_cleanup' as cleanup;
 ```
 ";
 
     let book = create_book_with_content(chapter_content);
     let preprocessor = ValidatorPreprocessor::new();
 
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_script(book, passing_script);
 
     match result {
         Ok(processed_book) => {
@@ -222,23 +259,23 @@ SELECT visible;
 
             let output = &chapter.content;
 
-            // Hidden lines should be stripped
+            // Hidden lines should be stripped from output
             assert!(
                 !output.contains("@@"),
-                "@@ lines should be stripped. Output:\n{output}"
+                "@@ prefix should be stripped. Output:\n{output}"
             );
             assert!(
-                !output.contains("CREATE TABLE hidden"),
-                "Hidden content should be stripped. Output:\n{output}"
+                !output.contains("hidden_setup"),
+                "Hidden setup line should be stripped. Output:\n{output}"
             );
             assert!(
-                !output.contains("DROP TABLE hidden"),
-                "Hidden content should be stripped. Output:\n{output}"
+                !output.contains("hidden_cleanup"),
+                "Hidden cleanup line should be stripped. Output:\n{output}"
             );
 
             // Visible content remains
             assert!(
-                output.contains("SELECT visible"),
+                output.contains("SELECT 'visible'"),
                 "Visible content should remain. Output:\n{output}"
             );
 
@@ -250,25 +287,146 @@ SELECT visible;
     }
 }
 
+/// Test: @@ prefix stripped from VALIDATION content (but lines kept)
+///
+/// This is the key integration test for the @@ prefix bug fix:
+/// - `@@SELECT 1;` is INVALID SQL (if @@ not stripped, validator fails)
+/// - After fix, @@ prefix is stripped → `SELECT 1;` → valid SQL → validator passes
+/// - Output still removes entire @@ lines (existing behavior)
+///
+/// Uses real sqlite validator to prove the fix works end-to-end.
+#[test]
+fn double_at_prefix_stripped_for_validation_content() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
+    // Content has @@ prefixed SQL which would be INVALID if @@ wasn't stripped
+    // @@SELECT 1; → SELECT 1; (valid SQL) for validation
+    // @@SELECT 1; → (line removed) for output
+    let chapter_content = r"# Hidden Line Test
+
+```sql validator=sqlite
+@@SELECT 1 as hidden_result;
+SELECT 2 as visible_result;
+```
+";
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    // This will FAIL if @@ prefix is NOT stripped (@@SELECT is invalid SQL)
+    // This will PASS if @@ prefix IS stripped (SELECT 1 is valid SQL)
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(processed_book) => {
+            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+                panic!("Expected chapter");
+            };
+
+            let output = &chapter.content;
+
+            // @@ lines should be REMOVED from output (existing behavior)
+            assert!(
+                !output.contains("hidden_result"),
+                "Hidden line content should be removed from output. Output:\n{output}"
+            );
+
+            // Non-@@ lines should remain in output
+            assert!(
+                output.contains("SELECT 2 as visible_result"),
+                "Visible content should remain. Output:\n{output}"
+            );
+
+            println!("Hidden line validation test passed! Output:\n{output}");
+        }
+        Err(e) => {
+            // If this fails, the @@ prefix was NOT stripped before validation
+            panic!("Validator failed - @@ prefix was likely NOT stripped before validation: {e}");
+        }
+    }
+}
+
+/// Test: @@ prefix with SETUP and ASSERT markers combined
+///
+/// Verifies that @@ prefix stripping works correctly when combined with other markers.
+#[test]
+fn double_at_prefix_works_with_setup_and_assert() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
+    // Complex case: @@ lines + SETUP + ASSERT
+    let chapter_content = r"# Hidden Lines with Markers
+
+```sql validator=sqlite
+<!--SETUP
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS items(id INTEGER); INSERT INTO items VALUES(1);'
+-->
+@@SELECT id FROM items WHERE id = 1;
+SELECT id FROM items;
+<!--ASSERT
+rows >= 1
+-->
+```
+";
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(processed_book) => {
+            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+                panic!("Expected chapter");
+            };
+
+            let output = &chapter.content;
+
+            // All markers stripped
+            assert!(!output.contains("<!--SETUP"), "SETUP should be stripped");
+            assert!(!output.contains("<!--ASSERT"), "ASSERT should be stripped");
+            assert!(
+                !output.contains("WHERE id = 1"),
+                "Hidden query should be removed from output. Output:\n{output}"
+            );
+
+            // Visible content remains
+            assert!(
+                output.contains("SELECT id FROM items"),
+                "Visible SELECT should remain. Output:\n{output}"
+            );
+
+            println!("Hidden lines with markers test passed! Output:\n{output}");
+        }
+        Err(e) => {
+            panic!("Preprocessor failed: {e}");
+        }
+    }
+}
+
 /// Test: Chapter with multiple validator= blocks (all validated, all stripped)
 #[test]
 fn preprocessor_handles_multiple_validator_blocks() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let chapter_content = r"# Test Chapter
 
 First block:
 
-```sql validator=test
+```sql validator=sqlite
 <!--SETUP
-CREATE TABLE t1;
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS t1(id INTEGER);'
 -->
 SELECT 1;
 ```
 
 Second block:
 
-```sql validator=test
+```sql validator=sqlite
 <!--SETUP
-CREATE TABLE t2;
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS t2(id INTEGER);'
 -->
 SELECT 2;
 <!--ASSERT
@@ -286,7 +444,7 @@ fn main() {}
     let book = create_book_with_content(chapter_content);
     let preprocessor = ValidatorPreprocessor::new();
 
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     match result {
         Ok(processed_book) => {
@@ -302,11 +460,11 @@ fn main() {}
                 "SETUP markers should be stripped. Output:\n{output}"
             );
             assert!(
-                !output.contains("CREATE TABLE t1"),
+                !output.contains("CREATE TABLE"),
                 "First setup should be stripped. Output:\n{output}"
             );
             assert!(
-                !output.contains("CREATE TABLE t2"),
+                !output.contains("t1(id"),
                 "Second setup should be stripped. Output:\n{output}"
             );
             assert!(
@@ -336,13 +494,13 @@ fn main() {}
     }
 }
 
-/// Creates a book with nested chapters
+/// Creates a book with nested chapters (uses sqlite validator)
 fn create_book_with_nested_chapters() -> Book {
     let parent_content = r"# Parent Chapter
 
-```sql validator=test
+```sql validator=sqlite
 <!--SETUP
-CREATE TABLE parent;
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS parent(id INTEGER);'
 -->
 SELECT 'parent';
 ```
@@ -350,9 +508,9 @@ SELECT 'parent';
 
     let child_content = r"# Child Chapter
 
-```sql validator=test
+```sql validator=sqlite
 <!--SETUP
-CREATE TABLE child;
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS child(id INTEGER);'
 -->
 SELECT 'child';
 ```
@@ -383,10 +541,13 @@ SELECT 'child';
 /// Test: Nested sub-chapters processed recursively
 #[test]
 fn preprocessor_handles_nested_chapters() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let book = create_book_with_nested_chapters();
     let preprocessor = ValidatorPreprocessor::new();
 
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     match result {
         Ok(processed_book) => {
@@ -433,9 +594,6 @@ fn preprocessor_handles_nested_chapters() {
 // ============================================================================
 // Config-based validator tests
 // ============================================================================
-
-use mdbook_validator::config::{Config, ValidatorConfig};
-use std::collections::HashMap;
 
 /// Test: Preprocessor uses configured validator with osquery container
 ///

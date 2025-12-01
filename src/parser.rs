@@ -314,6 +314,23 @@ mod tests {
         assert_eq!(result, "line1\nline2");
     }
 
+    #[test]
+    fn strip_double_at_prefix_double_prefix_strips_one() {
+        // @@@@foo should become @@foo (only one @@ prefix stripped per line)
+        // This is intentional: if user writes @@@@, they want @@ in validation content
+        let content = "@@@@foo";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, "@@foo");
+    }
+
+    #[test]
+    fn strip_double_at_prefix_mixed_leading_and_middle() {
+        // Only leading @@ should be stripped, @@ in middle of line stays
+        let content = "@@first line\nline with @@ middle\n@@another hidden";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, "first line\nline with @@ middle\nanother hidden");
+    }
+
     // ==================== validation_content tests ====================
 
     #[test]
