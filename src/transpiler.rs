@@ -215,4 +215,22 @@ mod tests {
         let result = strip_marker_block(content, "<!--SETUP");
         assert_eq!(result, content);
     }
+
+    // === Edge cases migrated from tests/transpiler_tests.rs ===
+
+    #[test]
+    fn strip_markers_double_at_at_end_no_newline() {
+        // @@ at end without trailing newline
+        let input = "SELECT 1;\n@@hidden";
+        let result = strip_markers(input);
+        assert_eq!(result, "SELECT 1;");
+    }
+
+    #[test]
+    fn strip_markers_only_markers_returns_empty() {
+        // Content with ONLY markers returns empty string
+        let input = "<!--SETUP\nCREATE TABLE t;\n-->\n<!--ASSERT\nrows >= 1\n-->";
+        let result = strip_markers(input);
+        assert_eq!(result, "");
+    }
 }
