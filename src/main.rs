@@ -53,6 +53,13 @@ fn run_preprocessor(preprocessor: &ValidatorPreprocessor) -> Result<(), mdbook::
     let mut input = String::new();
     io::stdin().read_to_string(&mut input)?;
 
+    // Debug: log input length and first 200 chars
+    tracing::warn!(
+        "DEBUG stdin: {} bytes. First 200 chars: {:?}",
+        input.len(),
+        &input[..input.len().min(200)]
+    );
+
     let (ctx, book) = CmdPreprocessor::parse_input(io::Cursor::new(&input))?;
     let processed = preprocessor.run(&ctx, book)?;
 
