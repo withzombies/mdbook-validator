@@ -8,10 +8,26 @@ use std::io::{self, Read, Write};
 use std::process;
 
 use mdbook::preprocess::{CmdPreprocessor, Preprocessor};
+use mdbook_validator::dependency::{check_all, RealChecker};
 use mdbook_validator::ValidatorPreprocessor;
 
 fn main() {
     tracing_subscriber::fmt().with_writer(io::stderr).init();
+
+    // Check for required external dependencies and warn if missing
+    let status = check_all(&RealChecker);
+    if !status.jq_available {
+        tracing::warn!(
+            "jq is not installed. JSON validators (sqlite, osquery, osquery-config, bash-exec) \
+             will fail. Install with: brew install jq (macOS) or apt-get install jq (Linux)"
+        );
+    }
+    if !status.docker_available {
+        tracing::warn!(
+            "Docker is not running. Container-based validators will fail. \
+             Please start Docker Desktop or the Docker daemon."
+        );
+    }
 
     let preprocessor = ValidatorPreprocessor::new();
 

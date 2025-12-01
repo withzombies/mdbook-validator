@@ -5,6 +5,7 @@
 pub mod command;
 pub mod config;
 pub mod container;
+pub mod dependency;
 pub mod docker;
 pub mod error;
 pub mod host_validator;
