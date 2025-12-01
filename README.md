@@ -1,6 +1,6 @@
 # mdbook-validator
 
-> **Status: v1.0** - Production ready. All validators implemented with 155 passing tests.
+> **Status: v1.0** - Production ready. All validators implemented with 320+ passing tests.
 
 An mdBook preprocessor that validates code examples against live Docker containers during documentation builds. Catch documentation drift before it reaches your users.
 
@@ -61,8 +61,7 @@ script = "validators/validate-sqlite.sh"
 ````markdown
 ```sql validator=sqlite
 <!--SETUP
-CREATE TABLE users (id INTEGER, name TEXT);
-INSERT INTO users VALUES (1, 'alice'), (2, 'bob');
+sqlite3 /tmp/test.db "CREATE TABLE users (id INTEGER, name TEXT); INSERT INTO users VALUES (1, 'alice'), (2, 'bob');"
 -->
 SELECT name FROM users WHERE id = 1;
 <!--ASSERT
@@ -91,7 +90,7 @@ SELECT name FROM users WHERE id = 1;
 
 | Marker | Purpose |
 |--------|---------|
-| `<!--SETUP-->` | Setup code run before the visible content (validator-interpreted) |
+| `<!--SETUP-->` | Shell command(s) run in container before the query (e.g., `sqlite3 /tmp/test.db "CREATE TABLE..."`) |
 | `<!--ASSERT-->` | Output validation rules |
 | `<!--EXPECT-->` | Exact output matching (JSON) |
 
@@ -129,8 +128,7 @@ max_items = 100
 ````markdown
 ```sql validator=sqlite
 <!--SETUP
-CREATE TABLE orders (id INTEGER, total REAL, status TEXT);
-INSERT INTO orders VALUES (1, 99.99, 'shipped'), (2, 149.50, 'pending');
+sqlite3 /tmp/test.db "CREATE TABLE orders (id INTEGER, total REAL, status TEXT); INSERT INTO orders VALUES (1, 99.99, 'shipped'), (2, 149.50, 'pending');"
 -->
 SELECT status, COUNT(*) as count FROM orders GROUP BY status;
 <!--ASSERT
@@ -176,8 +174,7 @@ contains "root"
 ````markdown
 ```sql validator=sqlite
 <!--SETUP
-CREATE TABLE test (id INTEGER);
-INSERT INTO test VALUES (1), (2), (3);
+sqlite3 /tmp/test.db "CREATE TABLE test (id INTEGER); INSERT INTO test VALUES (1), (2), (3);"
 -->
 SELECT COUNT(*) as total FROM test
 <!--EXPECT
@@ -366,16 +363,14 @@ script = "validators/validate-custom.sh"
 
 ## Writing Custom Validators
 
-Validators are shell scripts that receive JSON via stdin:
+Validators are shell scripts that run on the **host** (not in containers). They receive:
 
-```json
-{
-  "setup": "CREATE TABLE test (id INTEGER);",
-  "content": "SELECT * FROM test;",
-  "assertions": "rows >= 1\ncontains \"test\"",
-  "expect": null
-}
-```
+- **stdin**: JSON output from the container execution (e.g., `[{"id": 1, "name": "test"}]`)
+- **VALIDATOR_ASSERTIONS** env var: Assertion rules, newline-separated
+- **VALIDATOR_EXPECT** env var: Expected output for exact matching (optional)
+- **CONTAINER_STDERR** env var: stderr from container execution (for warning detection)
+
+The preprocessor handles SETUP and query execution in the container—validators only validate the output.
 
 Exit 0 for success, non-zero for failure. Write errors to stderr.
 
@@ -385,27 +380,43 @@ Example validator:
 #!/bin/bash
 set -e
 
-INPUT=$(cat)
-SETUP=$(echo "$INPUT" | jq -r '.setup // empty')
-CONTENT=$(echo "$INPUT" | jq -r '.content')
-ASSERTIONS=$(echo "$INPUT" | jq -r '.assertions // empty')
+# Read JSON output from container (stdin)
+JSON_OUTPUT=$(cat)
 
-# Run setup if provided
-if [ -n "$SETUP" ]; then
-    echo "$SETUP" | sqlite3 "$DB_FILE"
+# Validate JSON is parseable
+echo "$JSON_OUTPUT" | jq empty 2>/dev/null || {
+    echo "Invalid JSON output" >&2
+    exit 1
+}
+
+# Check assertions if provided
+if [ -n "${VALIDATOR_ASSERTIONS:-}" ]; then
+    ROW_COUNT=$(echo "$JSON_OUTPUT" | jq 'length')
+
+    # Example: check "rows >= N"
+    if [[ "$VALIDATOR_ASSERTIONS" == *"rows >= "* ]]; then
+        expected=$(echo "$VALIDATOR_ASSERTIONS" | grep -oP 'rows >= \K\d+')
+        if [ "$ROW_COUNT" -lt "$expected" ]; then
+            echo "Assertion failed: rows >= $expected (got $ROW_COUNT)" >&2
+            exit 1
+        fi
+    fi
 fi
 
-# Run query
-OUTPUT=$(echo "$CONTENT" | sqlite3 -json "$DB_FILE")
-
-# Check assertions
-if [ -n "$ASSERTIONS" ]; then
-    ROW_COUNT=$(echo "$OUTPUT" | jq 'length')
-    # ... validate assertions ...
+# Check expected output if provided
+if [ -n "${VALIDATOR_EXPECT:-}" ]; then
+    actual=$(echo "$JSON_OUTPUT" | jq -c '.')
+    expected=$(echo "$VALIDATOR_EXPECT" | jq -c '.')
+    if [ "$actual" != "$expected" ]; then
+        echo "Output mismatch: expected $expected, got $actual" >&2
+        exit 1
+    fi
 fi
 
 exit 0
 ```
+
+See `validators/validate-template.sh` for a comprehensive template with all assertion patterns.
 
 ## Known Limitations
 
@@ -414,15 +425,17 @@ exit 0
 3. **Marker collision** - If your code contains `-->`, it may break marker parsing
 4. **No line numbers in errors** - Error messages show file but not exact line
 
-## How It Will Work
+## How It Works
 
 1. mdBook calls the preprocessor with chapter content
 2. Preprocessor finds code blocks with `validator=` attribute
 3. Extracts markers (`<!--SETUP-->`, `<!--ASSERT-->`, `<!--EXPECT-->`) and `@@` lines
 4. Starts the specified container via testcontainers
-5. Runs the validator script with extracted content as JSON
-6. On success: strips all markers, returns clean content to mdBook
-7. On failure: exits with error, build fails
+5. Runs SETUP shell command in container (if any)
+6. Runs the visible content via `exec_command` in container → captures JSON output
+7. Runs validator script on HOST with JSON output as stdin, assertions/expect as env vars
+8. On success: strips all markers, returns clean content to mdBook
+9. On failure: exits with error, build fails
 
 ## License
 
