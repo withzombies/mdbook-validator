@@ -37,6 +37,9 @@ jobs:
       - name: Install mdbook
         uses: taiki-e/install-action@mdbook
 
+      - name: Build binary
+        run: cargo build
+
       - name: Run tests
         run: cargo nextest run --no-fail-fast
 
@@ -54,6 +57,9 @@ jobs:
 
       - name: Install mdbook
         uses: taiki-e/install-action@mdbook
+
+      - name: Build binary
+        run: cargo build
 
       - name: Generate coverage report
         run: |

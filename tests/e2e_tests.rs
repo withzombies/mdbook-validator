@@ -29,22 +29,8 @@ fn e2e_book_path() -> PathBuf {
 
 /// Returns the path to the mdbook-validator binary
 fn validator_binary_path() -> PathBuf {
-    // cargo test builds debug, cargo test --release builds release
-    let manifest_dir = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-
-    // Try release first, then debug
-    let release_path = manifest_dir.join("target/release/mdbook-validator");
-    if release_path.exists() {
-        return release_path;
-    }
-
-    let debug_path = manifest_dir.join("target/debug/mdbook-validator");
-    if debug_path.exists() {
-        return debug_path;
-    }
-
-    // Fallback: use CARGO_BIN_EXE which is set during cargo test
-    // This points to the built binary in target/debug/deps or target/release/deps
+    // Use CARGO_BIN_EXE_mdbook-validator which cargo sets during test compilation
+    // This points to the actual binary that cargo will build for the test
     PathBuf::from(env!("CARGO_BIN_EXE_mdbook-validator"))
 }
 
