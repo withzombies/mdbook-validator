@@ -13,8 +13,8 @@
     clippy::uninlined_format_args
 )]
 
-use mdbook::book::{Book, BookItem, Chapter};
-use mdbook::preprocess::Preprocessor;
+use mdbook_preprocessor::book::{Book, BookItem, Chapter};
+use mdbook_preprocessor::Preprocessor;
 use mdbook_validator::config::{Config, ValidatorConfig};
 use mdbook_validator::container::ValidatorContainer;
 use mdbook_validator::ValidatorPreprocessor;
@@ -102,7 +102,7 @@ Text after.
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
     // Use process_book_with_config - skip attribute prevents validation
@@ -110,7 +110,7 @@ Text after.
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter in processed book");
             };
 
@@ -152,7 +152,7 @@ print("hello")
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Python validator WITHOUT exec_command = uses DEFAULT_EXEC_FALLBACK
     let mut validators = HashMap::new();
@@ -184,7 +184,7 @@ print("hello")
     );
 
     let processed_book = result.unwrap();
-    let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+    let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
         panic!("Expected chapter");
     };
     assert!(
@@ -223,7 +223,7 @@ rows = 999
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator (standard configuration)
     let mut validators = HashMap::new();
@@ -294,7 +294,7 @@ SELECT 2;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator
     let mut validators = HashMap::new();
@@ -320,7 +320,7 @@ SELECT 2;
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 

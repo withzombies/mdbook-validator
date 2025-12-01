@@ -11,7 +11,7 @@
     clippy::uninlined_format_args
 )]
 
-use mdbook::book::{Book, BookItem, Chapter};
+use mdbook_preprocessor::book::{Book, BookItem, Chapter};
 use mdbook_validator::config::{Config, ValidatorConfig};
 use mdbook_validator::error::ValidatorError;
 use mdbook_validator::ValidatorPreprocessor;
@@ -80,7 +80,7 @@ SELECT 'parent';
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(parent));
+    book.items.push(BookItem::Chapter(parent));
 
     let preprocessor = ValidatorPreprocessor::new();
 
@@ -95,7 +95,7 @@ SELECT 'parent';
 
     // Verify parent was processed
     let processed = result.unwrap();
-    let Some(BookItem::Chapter(parent_ch)) = processed.sections.first() else {
+    let Some(BookItem::Chapter(parent_ch)) = processed.items.first() else {
         panic!("Expected parent chapter");
     };
 
@@ -132,7 +132,7 @@ fn test_empty_chapter_returns_early() {
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
     let result = preprocessor.process_book_with_config(book, &config, &book_root);
@@ -144,7 +144,7 @@ fn test_empty_chapter_returns_early() {
 
     // Verify chapter content remains empty
     let processed = result.unwrap();
-    let Some(BookItem::Chapter(ch)) = processed.sections.first() else {
+    let Some(BookItem::Chapter(ch)) = processed.items.first() else {
         panic!("Expected chapter");
     };
 
@@ -181,7 +181,7 @@ More text here.
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
     let result = preprocessor.process_book_with_config(book, &config, &book_root);
@@ -219,7 +219,7 @@ SELECT 1;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator
     let mut validators = HashMap::new();
@@ -283,7 +283,7 @@ sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS t(id INT)'
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator
     let mut validators = HashMap::new();
@@ -349,7 +349,7 @@ rows = 999
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator
     let mut validators = HashMap::new();
@@ -417,7 +417,7 @@ SELECT 'parent' as name;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(parent));
+    book.items.push(BookItem::Chapter(parent));
 
     // Configure sqlite validator
     let mut validators = HashMap::new();
@@ -447,7 +447,7 @@ SELECT 'parent' as name;
 
     // Verify both chapters were processed
     let processed = result.unwrap();
-    let Some(BookItem::Chapter(parent_ch)) = processed.sections.first() else {
+    let Some(BookItem::Chapter(parent_ch)) = processed.items.first() else {
         panic!("Expected parent chapter");
     };
 
@@ -473,7 +473,7 @@ fn test_empty_chapter_with_config_returns_early() {
     let chapter = Chapter::new("Empty", String::new(), PathBuf::from("empty.md"), vec![]);
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator (won't be used since chapter is empty)
     let mut validators = HashMap::new();
@@ -517,7 +517,7 @@ fn test_no_validator_blocks_with_config_returns_early() {
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     // Configure sqlite validator (won't be used since no validator blocks)
     let mut validators = HashMap::new();
@@ -568,7 +568,7 @@ SELECT 1;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let mut validators = HashMap::new();
     validators.insert(
@@ -624,7 +624,7 @@ SELECT 1;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let mut validators = HashMap::new();
     validators.insert(
@@ -678,7 +678,7 @@ SELECT 1;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let mut validators = HashMap::new();
     validators.insert(
@@ -736,7 +736,7 @@ rows = 0
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let mut validators = HashMap::new();
     validators.insert(
@@ -793,7 +793,7 @@ SELECT 1;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let mut validators = HashMap::new();
     validators.insert(
@@ -869,7 +869,7 @@ SELECT 'level1';
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(level1));
+    book.items.push(BookItem::Chapter(level1));
 
     let preprocessor = ValidatorPreprocessor::new();
     let result = preprocessor.process_book_with_config(book, &config, &book_root);
@@ -882,7 +882,7 @@ SELECT 'level1';
 
     // Verify all levels were processed
     let processed = result.unwrap();
-    let Some(BookItem::Chapter(l1)) = processed.sections.first() else {
+    let Some(BookItem::Chapter(l1)) = processed.items.first() else {
         panic!("Expected level 1 chapter");
     };
     assert!(l1.content.contains("SELECT 'level1'"));
@@ -923,7 +923,7 @@ SELECT 1;
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
     let result = preprocessor.process_book_with_script(book, failing_script);
@@ -961,7 +961,7 @@ SELECT 'this is skipped';
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
     let result = preprocessor.process_book_with_config(book, &config, &book_root);
@@ -993,7 +993,7 @@ SELECT 'this is skipped';
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
 
     let mut validators = HashMap::new();
     validators.insert(

@@ -48,18 +48,15 @@ impl Config {
     /// # Errors
     ///
     /// Returns error if the config section is missing or malformed.
-    pub fn from_context(ctx: &mdbook::preprocess::PreprocessorContext) -> Result<Self> {
-        let Some(table) = ctx.config.get_preprocessor("validator") else {
-            return Err(ValidatorError::Config {
+    pub fn from_context(ctx: &mdbook_preprocessor::PreprocessorContext) -> Result<Self> {
+        // Use the new mdbook 0.5 config API to get preprocessor config
+        let config: Option<Config> = ctx.config.get("preprocessor.validator")?;
+        config.ok_or_else(|| {
+            ValidatorError::Config {
                 message: "No [preprocessor.validator] section in book.toml".into(),
             }
-            .into());
-        };
-
-        // Convert toml::Table to our Config struct via toml::Value
-        let value = toml::Value::Table(table.clone());
-        let config: Config = value.try_into()?;
-        Ok(config)
+            .into()
+        })
     }
 
     /// Get validator config by name.

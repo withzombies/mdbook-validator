@@ -13,7 +13,7 @@ keywords = ["mdbook", "validation", "documentation", "docker", "testing"]
 categories = ["development-tools::build-utils", "development-tools::testing"]
 
 [dependencies]
-mdbook = "0.4"
+mdbook-preprocessor = "0.5"
 anyhow = "1.0"
 thiserror = "1.0"
 serde = { version = "1.0", features = ["derive"] }

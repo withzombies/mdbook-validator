@@ -12,9 +12,9 @@ use std::collections::HashMap;
 use std::fmt::Write;
 use std::path::Path;
 
-use mdbook::book::{Book, BookItem, Chapter};
-use mdbook::errors::Error;
-use mdbook::preprocess::{Preprocessor, PreprocessorContext};
+use mdbook_preprocessor::book::{Book, BookItem, Chapter};
+use mdbook_preprocessor::errors::Error;
+use mdbook_preprocessor::{Preprocessor, PreprocessorContext};
 use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 
 use crate::command::RealCommandRunner;
@@ -66,11 +66,11 @@ impl Preprocessor for ValidatorPreprocessor {
         Ok(book)
     }
 
-    fn supports_renderer(&self, renderer: &str) -> bool {
+    fn supports_renderer(&self, renderer: &str) -> Result<bool, anyhow::Error> {
         // Support all renderers - we validate and strip markers,
         // producing valid markdown for any output format
         let _ = renderer;
-        true
+        Ok(true)
     }
 }
 
@@ -129,7 +129,7 @@ impl ValidatorPreprocessor {
         // Cache started containers by validator name
         let mut containers: HashMap<String, ValidatorContainer> = HashMap::new();
 
-        for item in &mut book.sections {
+        for item in &mut book.items {
             self.process_book_item_with_config(item, config, book_root, &mut containers)
                 .await?;
         }
@@ -147,7 +147,7 @@ impl ValidatorPreprocessor {
             .await
             .map_err(|e| Error::msg(format!("Failed to start container: {e}")))?;
 
-        for item in &mut book.sections {
+        for item in &mut book.items {
             self.process_book_item(item, &container).await?;
         }
 

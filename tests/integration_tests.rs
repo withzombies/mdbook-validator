@@ -10,8 +10,8 @@
     clippy::needless_raw_string_hashes
 )]
 
-use mdbook::book::{Book, BookItem, Chapter};
-use mdbook::preprocess::Preprocessor;
+use mdbook_preprocessor::book::{Book, BookItem, Chapter};
+use mdbook_preprocessor::Preprocessor;
 use mdbook_validator::config::{Config, ValidatorConfig};
 use mdbook_validator::ValidatorPreprocessor;
 use std::collections::HashMap;
@@ -45,16 +45,16 @@ fn preprocessor_has_correct_name() {
 #[test]
 fn preprocessor_supports_html_renderer() {
     let preprocessor = ValidatorPreprocessor::new();
-    assert!(preprocessor.supports_renderer("html"));
+    assert!(preprocessor.supports_renderer("html").unwrap());
 }
 
 #[test]
 fn preprocessor_supports_all_renderers() {
     // We validate and strip markers, producing valid markdown for any output format
     let preprocessor = ValidatorPreprocessor::new();
-    assert!(preprocessor.supports_renderer("pdf"));
-    assert!(preprocessor.supports_renderer("epub"));
-    assert!(preprocessor.supports_renderer("markdown"));
+    assert!(preprocessor.supports_renderer("pdf").unwrap());
+    assert!(preprocessor.supports_renderer("epub").unwrap());
+    assert!(preprocessor.supports_renderer("markdown").unwrap());
 }
 
 /// Creates a Book with a single chapter containing the given content
@@ -67,7 +67,7 @@ fn create_book_with_content(chapter_content: &str) -> Book {
     );
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(chapter));
+    book.items.push(BookItem::Chapter(chapter));
     book
 }
 
@@ -105,7 +105,7 @@ More text after.
     match result {
         Ok(processed_book) => {
             // Get the processed chapter content
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter in processed book");
             };
 
@@ -253,7 +253,7 @@ SELECT 'visible' as result;
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 
@@ -320,7 +320,7 @@ SELECT 2 as visible_result;
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 
@@ -377,7 +377,7 @@ rows >= 1
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 
@@ -448,7 +448,7 @@ fn main() {}
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 
@@ -534,7 +534,7 @@ SELECT 'child';
         .push(BookItem::Chapter(child_chapter));
 
     let mut book = Book::new();
-    book.sections.push(BookItem::Chapter(parent_chapter));
+    book.items.push(BookItem::Chapter(parent_chapter));
     book
 }
 
@@ -552,7 +552,7 @@ fn preprocessor_handles_nested_chapters() {
     match result {
         Ok(processed_book) => {
             // Check parent chapter
-            let Some(BookItem::Chapter(parent)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(parent)) = processed_book.items.first() else {
                 panic!("Expected parent chapter");
             };
 
@@ -652,7 +652,7 @@ rows >= 1
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 
@@ -768,7 +768,7 @@ SELECT id FROM items;
 
     match result {
         Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
                 panic!("Expected chapter");
             };
 
