@@ -55,6 +55,19 @@ fn ensure_book_built() {
         let book_toml_path = book_path.join("book.toml");
         let original_toml = fs::read_to_string(&book_toml_path).expect("Read book.toml");
         let modified_toml = rewrite_book_toml_for_temp(&original_toml);
+
+        // Debug: print binary path and modified toml
+        let binary_path = validator_binary_path();
+        println!("DEBUG: Binary path = {}", binary_path.display());
+        println!("DEBUG: Binary exists = {}", binary_path.exists());
+        println!(
+            "DEBUG: Modified book.toml command line:\n{}",
+            modified_toml
+                .lines()
+                .find(|l| l.contains("command ="))
+                .unwrap_or("NOT FOUND")
+        );
+
         fs::write(&book_toml_path, &modified_toml).expect("Write modified book.toml");
 
         let output = Command::new("mdbook")
