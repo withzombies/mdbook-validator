@@ -43,28 +43,51 @@ fn rewrite_book_toml_for_temp(content: &str) -> String {
     )
 }
 
+/// Stores the temp directory path so tests can access the output
+static TEMP_BOOK_PATH: OnceLock<PathBuf> = OnceLock::new();
+
 /// Ensure the book is built exactly once before any tests check output.
 /// Uses `OnceLock` for thread-safe, zero-cost synchronization.
+/// Builds in a temp directory to avoid modifying source files.
 static BUILD_RESULT: OnceLock<bool> = OnceLock::new();
 
 fn ensure_book_built() {
     let _ = BUILD_RESULT.get_or_init(|| {
+        use std::env::temp_dir;
+
         let book_path = e2e_book_path();
 
-        // Create a modified book.toml with absolute binary path
-        let book_toml_path = book_path.join("book.toml");
+        // Create a temporary book directory to avoid modifying source files
+        let temp_book = temp_dir().join(format!("e2e-valid-book-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&temp_book); // Clean up from previous runs
+
+        // Copy the entire e2e-book to temp directory
+        copy_dir_recursive(&book_path, &temp_book).expect("Copy e2e-book to temp");
+
+        // Rewrite book.toml in temp directory to use absolute binary path
+        let book_toml_path = temp_book.join("book.toml");
         let original_toml = fs::read_to_string(&book_toml_path).expect("Read book.toml");
         let modified_toml = rewrite_book_toml_for_temp(&original_toml);
-
         fs::write(&book_toml_path, &modified_toml).expect("Write modified book.toml");
 
+        // Symlink validators directory (needed for validator scripts)
+        #[cfg(unix)]
+        {
+            let validators_src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("validators");
+            let validators_dst = temp_book.join("validators");
+            // Remove the copied validators dir and replace with symlink
+            let _ = fs::remove_dir_all(&validators_dst);
+            std::os::unix::fs::symlink(&validators_src, &validators_dst)
+                .expect("Symlink validators");
+        }
+
+        // Store temp path for other tests to access output
+        let _ = TEMP_BOOK_PATH.set(temp_book.clone());
+
         let output = Command::new("mdbook")
-            .args(["build", book_path.to_str().expect("valid path")])
+            .args(["build", temp_book.to_str().expect("valid path")])
             .output()
             .expect("Failed to execute mdbook - is mdbook installed?");
-
-        // Restore original book.toml
-        fs::write(&book_toml_path, &original_toml).expect("Restore original book.toml");
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         let stderr = String::from_utf8_lossy(&output.stderr);
@@ -84,6 +107,22 @@ fn ensure_book_built() {
 
         success
     });
+}
+
+/// Recursively copy a directory
+fn copy_dir_recursive(src: &std::path::Path, dst: &std::path::Path) -> std::io::Result<()> {
+    fs::create_dir_all(dst)?;
+    for entry in fs::read_dir(src)? {
+        let entry = entry?;
+        let path = entry.path();
+        let dest_path = dst.join(entry.file_name());
+        if path.is_dir() {
+            copy_dir_recursive(&path, &dest_path)?;
+        } else {
+            fs::copy(&path, &dest_path)?;
+        }
+    }
+    Ok(())
 }
 
 /// Test: Valid book builds successfully with real mdbook command
@@ -110,7 +149,7 @@ fn e2e_valid_book_builds_successfully() {
 fn e2e_output_has_no_markers() {
     ensure_book_built();
 
-    let book_path = e2e_book_path();
+    let book_path = TEMP_BOOK_PATH.get().expect("Temp book path should be set");
 
     // Read the generated HTML
     let html_path = book_path.join("book/valid-examples.html");

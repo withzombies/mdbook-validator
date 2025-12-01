@@ -3,7 +3,7 @@ title = "E2E Test Book"
 authors = ["Test"]
 
 [preprocessor.validator]
-command = "/Users/ryan/src/mdbook-validator/target/debug/mdbook-validator"
+command = "cargo run --quiet --"
 fail_fast = true
 
 [preprocessor.validator.validators.osquery]
