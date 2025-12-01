@@ -44,7 +44,7 @@ impl CommandRunner for RealCommandRunner {
         stdin_content: &str,
         env_vars: &[(&str, &str)],
     ) -> Result<Output> {
-        let mut cmd = Command::new("sh");
+        let mut cmd = Command::new("bash");
         cmd.arg(script_path)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -95,16 +95,16 @@ mod tests {
     #[test]
     fn test_run_script_success() {
         let runner = RealCommandRunner;
-        let result = runner.run_script("/bin/sh", "", &[]);
+        // Create a simple script that exits successfully
+        let result = runner.run_script("tests/fixtures/echo_validator.sh", "", &[]);
         assert!(result.is_ok());
     }
 
     #[test]
     fn test_run_script_with_stdin() {
         let runner = RealCommandRunner;
-        // Use -c to run a command that reads stdin
-        let result = runner.run_script("-c", "cat", &[]);
-        // This will run `sh -c cat` which reads from stdin (empty in this case)
+        // Use a real script that reads stdin
+        let result = runner.run_script("tests/fixtures/echo_validator.sh", "test input", &[]);
         assert!(result.is_ok());
     }
 
