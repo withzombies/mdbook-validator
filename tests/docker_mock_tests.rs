@@ -111,11 +111,13 @@ async fn test_create_exec_failure_returns_error() {
         .unwrap_err()
         .downcast::<ValidatorError>()
         .expect("should be ValidatorError");
-    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    let ValidatorError::ContainerExec { message } = err else {
+        panic!("Expected ContainerExec variant, got: {:?}", err);
+    };
     assert!(
-        err.to_string().contains("container not found"),
-        "Error should contain our message: {}",
-        err
+        message.contains("container not found"),
+        "Expected 'container not found' in message: {}",
+        message
     );
 }
 
@@ -144,11 +146,13 @@ async fn test_start_exec_failure_returns_error() {
         .unwrap_err()
         .downcast::<ValidatorError>()
         .expect("should be ValidatorError");
-    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    let ValidatorError::ContainerExec { message } = err else {
+        panic!("Expected ContainerExec variant, got: {:?}", err);
+    };
     assert!(
-        err.to_string().contains("exec instance not running"),
-        "Error should contain our message: {}",
-        err
+        message.contains("exec instance not running"),
+        "Expected 'exec instance not running' in message: {}",
+        message
     );
 }
 
@@ -174,11 +178,13 @@ async fn test_exec_with_env_create_exec_failure() {
         .unwrap_err()
         .downcast::<ValidatorError>()
         .expect("should be ValidatorError");
-    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    let ValidatorError::ContainerExec { message } = err else {
+        panic!("Expected ContainerExec variant, got: {:?}", err);
+    };
     assert!(
-        err.to_string().contains("container paused"),
-        "Error should contain our message: {}",
-        err
+        message.contains("container paused"),
+        "Expected 'container paused' in message: {}",
+        message
     );
 }
 
@@ -204,11 +210,13 @@ async fn test_exec_with_stdin_create_exec_failure() {
         .unwrap_err()
         .downcast::<ValidatorError>()
         .expect("should be ValidatorError");
-    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    let ValidatorError::ContainerExec { message } = err else {
+        panic!("Expected ContainerExec variant, got: {:?}", err);
+    };
     assert!(
-        err.to_string().contains("no such container"),
-        "Error should contain our message: {}",
-        err
+        message.contains("no such container"),
+        "Expected 'no such container' in message: {}",
+        message
     );
 }
 
@@ -237,11 +245,13 @@ async fn test_inspect_exec_failure_returns_error() {
         .unwrap_err()
         .downcast::<ValidatorError>()
         .expect("should be ValidatorError");
-    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    let ValidatorError::ContainerExec { message } = err else {
+        panic!("Expected ContainerExec variant, got: {:?}", err);
+    };
     assert!(
-        err.to_string().contains("inspect_exec failed"),
-        "Error should be wrapped with context: {}",
-        err
+        message.contains("inspect_exec failed"),
+        "Expected 'inspect_exec failed' in message: {}",
+        message
     );
 }
 

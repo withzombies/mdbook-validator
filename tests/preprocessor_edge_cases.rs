@@ -9,7 +9,8 @@
     clippy::print_stdout,
     clippy::str_to_string,
     clippy::needless_raw_string_hashes,
-    clippy::default_constructed_unit_structs
+    clippy::default_constructed_unit_structs,
+    clippy::uninlined_format_args
 )]
 
 use mdbook::book::{Book, BookItem, Chapter};
@@ -127,19 +128,19 @@ Text after.
 }
 
 // =============================================================================
-// Test 4: get_exec_command fallback for custom validator names
+// Test 4a: get_exec_command fallback works with passing validator
 // Target: preprocessor.rs:439 (_ => DEFAULT_EXEC_FALLBACK)
 // =============================================================================
 #[test]
-fn preprocessor_uses_fallback_exec_for_custom_validator() {
-    // Configure a custom validator that's NOT sqlite or osquery
-    // This should use DEFAULT_EXEC_FALLBACK ("cat")
+fn preprocessor_fallback_exec_command_works_with_python() {
+    // Configure a python validator WITHOUT exec_command to use DEFAULT_EXEC_FALLBACK
     let book_root = std::env::current_dir().expect("should get current dir");
 
+    // Valid Python that will pass validation
     let chapter_content = r#"# Test Chapter
 
-```text validator=custom
-Just some text content
+```python validator=python-fallback
+print("hello")
 ```
 "#;
 
@@ -153,14 +154,14 @@ Just some text content
     let mut book = Book::new();
     book.sections.push(BookItem::Chapter(chapter));
 
-    // Create config with custom validator (not sqlite/osquery)
+    // Python validator WITHOUT exec_command = uses DEFAULT_EXEC_FALLBACK
     let mut validators = HashMap::new();
     validators.insert(
-        "custom".to_string(),
+        "python-fallback".to_string(),
         ValidatorConfig {
-            container: "alpine:3.19".to_string(),
-            script: PathBuf::from("validators/validate-template.sh"),
-            exec_command: None, // No exec_command = use fallback
+            container: "python:3.12-slim".to_string(),
+            script: PathBuf::from("validators/validate-python.sh"),
+            exec_command: None, // No exec_command = use fallback "sh -c"
         },
     );
 
@@ -175,26 +176,92 @@ Just some text content
     // This exercises the _ => DEFAULT_EXEC_FALLBACK branch
     let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
-    // The test passes if we reach this point - the fallback was used
-    // The validator may pass or fail, but the key is get_exec_command worked
-    match result {
-        Ok(processed_book) => {
-            let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
-                panic!("Expected chapter");
-            };
-            // Content should be processed (markers stripped if any)
-            assert!(
-                chapter.content.contains("Just some text content"),
-                "Content should remain"
-            );
-            println!("Custom validator with fallback exec succeeded");
-        }
-        Err(e) => {
-            // Validation failure is acceptable - we're testing the exec_command path
-            // not the validator success. The key is it didn't panic on get_exec_command.
-            println!("Custom validator error (acceptable): {e}");
-        }
-    }
+    // This MUST succeed - fallback path works with valid Python
+    assert!(
+        result.is_ok(),
+        "Fallback exec should work with valid Python: {:?}",
+        result.err()
+    );
+
+    let processed_book = result.unwrap();
+    let Some(BookItem::Chapter(chapter)) = processed_book.sections.first() else {
+        panic!("Expected chapter");
+    };
+    assert!(
+        chapter.content.contains("print"),
+        "Content should be preserved"
+    );
+}
+
+// =============================================================================
+// Test 4b: Validation failure returns ValidatorError::ValidationFailed
+// Target: preprocessor.rs:400-424 (validation error handling)
+// =============================================================================
+#[test]
+fn preprocessor_validation_failure_returns_correct_error_type() {
+    use mdbook_validator::error::ValidatorError;
+
+    let book_root = std::env::current_dir().expect("should get current dir");
+
+    // Use sqlite with an assertion that will ALWAYS fail
+    // This tests that validation failures return ValidatorError::ValidationFailed
+    let chapter_content = r#"# Test Chapter
+
+```sql validator=sqlite
+SELECT 1 as value
+<!--ASSERT
+rows = 999
+-->
+```
+"#;
+
+    let chapter = Chapter::new(
+        "Test Chapter",
+        chapter_content.to_string(),
+        PathBuf::from("test.md"),
+        vec![],
+    );
+
+    let mut book = Book::new();
+    book.sections.push(BookItem::Chapter(chapter));
+
+    // Configure sqlite validator (standard configuration)
+    let mut validators = HashMap::new();
+    validators.insert(
+        "sqlite".to_string(),
+        ValidatorConfig {
+            container: "keinos/sqlite3:3.47.2".to_string(),
+            script: PathBuf::from("validators/validate-sqlite.sh"),
+            exec_command: Some("sqlite3 -json /tmp/test.db".to_string()),
+        },
+    );
+
+    let config = Config {
+        fail_fast: true,
+        fixtures_dir: None,
+        validators,
+    };
+
+    let preprocessor = ValidatorPreprocessor::new();
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    // Validation MUST fail (assertion expects 999 rows, we only have 1)
+    assert!(
+        result.is_err(),
+        "Validation should fail with wrong row count"
+    );
+
+    let err = result.unwrap_err();
+    let validator_err = err
+        .downcast::<ValidatorError>()
+        .expect("Error should be ValidatorError");
+
+    // Should be ValidationFailed (assertion check failed)
+    assert!(
+        matches!(validator_err, ValidatorError::ValidationFailed { .. }),
+        "Expected ValidationFailed error, got: {:?}",
+        validator_err
+    );
 }
 
 // =============================================================================

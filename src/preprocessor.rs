@@ -20,6 +20,7 @@ use pulldown_cmark::{CodeBlockKind, Event, Parser, Tag, TagEnd};
 use crate::command::RealCommandRunner;
 use crate::config::{Config, ValidatorConfig};
 use crate::container::ValidatorContainer;
+use crate::error::ValidatorError;
 use crate::host_validator;
 use crate::parser::{extract_markers, parse_info_string, ExtractedMarkers};
 use crate::transpiler::strip_markers;
@@ -338,10 +339,15 @@ impl ValidatorPreprocessor {
                     .map_err(|e| Error::msg(format!("Setup exec failed: {e}")))?;
 
                 if setup_result.exit_code != 0 {
-                    return Err(Error::msg(format!(
-                        "Setup script failed in '{}' (validator: {}):\n\nScript:\n{}\n\nError:\n{}",
-                        chapter_name, block.validator_name, setup_script, setup_result.stderr
-                    )));
+                    #[allow(clippy::cast_possible_truncation)]
+                    return Err(ValidatorError::SetupFailed {
+                        exit_code: setup_result.exit_code as i32,
+                        message: format!(
+                            "in '{}' (validator: {}):\n\nScript:\n{}\n\nError:\n{}",
+                            chapter_name, block.validator_name, setup_script, setup_result.stderr
+                        ),
+                    }
+                    .into());
                 }
             }
         }
@@ -394,11 +400,8 @@ impl ValidatorPreprocessor {
 
         if validation_result.exit_code != 0 {
             let mut error_msg = format!(
-                "Validation failed in '{}' (validator: {}, exit code {}):\n\nCode:\n{}\n",
-                chapter_name,
-                block.validator_name,
-                validation_result.exit_code,
-                block.markers.visible_content
+                "in '{}' (validator: {}):\n\nCode:\n{}\n",
+                chapter_name, block.validator_name, block.markers.visible_content
             );
             if !validation_result.stderr.is_empty() {
                 let _ = write!(
@@ -414,7 +417,11 @@ impl ValidatorPreprocessor {
                     validation_result.stdout
                 );
             }
-            return Err(Error::msg(error_msg));
+            return Err(ValidatorError::ValidationFailed {
+                exit_code: validation_result.exit_code,
+                message: error_msg,
+            }
+            .into());
         }
 
         Ok(())

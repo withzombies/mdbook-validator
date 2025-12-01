@@ -13,6 +13,7 @@
 
 use mdbook::book::{Book, BookItem, Chapter};
 use mdbook_validator::config::{Config, ValidatorConfig};
+use mdbook_validator::error::ValidatorError;
 use mdbook_validator::ValidatorPreprocessor;
 use std::collections::HashMap;
 use std::path::PathBuf;
@@ -242,13 +243,17 @@ SELECT 1;
 
     // Setup should fail due to invalid SQL
     assert!(result.is_err(), "Setup script should fail with invalid SQL");
-    let err_msg = result.unwrap_err().to_string();
-    // The error may be from setup or query execution - both are acceptable
-    // as long as we trigger the error path
+
+    let err = result.unwrap_err();
+    let validator_err = err
+        .downcast::<ValidatorError>()
+        .expect("Error should be ValidatorError");
+
+    // Setup fails with invalid SQL - expect SetupFailed variant
     assert!(
-        err_msg.contains("Setup") || err_msg.contains("failed") || err_msg.contains("Error"),
-        "Error should mention failure: {}",
-        err_msg
+        matches!(validator_err, ValidatorError::SetupFailed { .. }),
+        "Expected SetupFailed error, got: {:?}",
+        validator_err
     );
 }
 
