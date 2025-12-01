@@ -1,6 +1,11 @@
 # mdbook-validator
 
-> **Status: v1.0** - Production ready. All validators implemented with 320+ passing tests.
+[![Crates.io](https://img.shields.io/crates/v/mdbook-validator.svg)](https://crates.io/crates/mdbook-validator)
+[![Documentation](https://docs.rs/mdbook-validator/badge.svg)](https://docs.rs/mdbook-validator)
+[![CI](https://github.com/withzombies/mdbook-validator/actions/workflows/ci.yml/badge.svg)](https://github.com/withzombies/mdbook-validator/actions/workflows/ci.yml)
+[![Coverage](https://img.shields.io/endpoint?url=https://gist.githubusercontent.com/withzombies/a0277ecc8a69526d47c694467b3bf9a4/raw/coverage.json)](https://github.com/withzombies/mdbook-validator/actions/workflows/ci.yml)
+[![License](https://img.shields.io/crates/l/mdbook-validator.svg)](https://github.com/withzombies/mdbook-validator/blob/main/LICENSE)
+[![Rust Version](https://img.shields.io/badge/rust-1.75%2B-blue.svg)](https://www.rust-lang.org)
 
 An mdBook preprocessor that validates code examples against live Docker containers during documentation builds. Catch documentation drift before it reaches your users.
 
