@@ -14,6 +14,7 @@
 use std::path::PathBuf;
 
 use mdbook_validator::config::{Config, ValidatorConfig};
+use mdbook_validator::ValidatorError;
 
 /// Test: ValidatorConfig can be deserialized from TOML
 #[test]
@@ -124,17 +125,15 @@ fn get_validator_errors_for_unknown_validator() {
 
     let config: Config = toml::from_str(toml_str).expect("should parse");
 
-    let err = config.get_validator("nonexistent").unwrap_err();
-    let msg = err.to_string();
-
-    assert!(
-        msg.contains("Unknown validator 'nonexistent'"),
-        "Error should mention unknown validator: {msg}"
-    );
-    assert!(
-        msg.contains("[preprocessor.validator.validators.nonexistent]"),
-        "Error should suggest config location: {msg}"
-    );
+    let err = config
+        .get_validator("nonexistent")
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(
+        err,
+        ValidatorError::UnknownValidator { name } if name == "nonexistent"
+    ));
 }
 
 /// Test: ValidatorConfig.validate() errors on empty container
@@ -146,12 +145,15 @@ fn validator_config_validate_errors_on_empty_container() {
         exec_command: None,
     };
 
-    let err = config.validate().unwrap_err();
-    assert!(
-        err.to_string().contains("container cannot be empty"),
-        "Should mention empty container: {}",
-        err
-    );
+    let err = config
+        .validate("test")
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(
+        err,
+        ValidatorError::InvalidConfig { reason, .. } if reason.contains("container cannot be empty")
+    ));
 }
 
 /// Test: ValidatorConfig.validate() errors on empty script
@@ -163,12 +165,15 @@ fn validator_config_validate_errors_on_empty_script() {
         exec_command: None,
     };
 
-    let err = config.validate().unwrap_err();
-    assert!(
-        err.to_string().contains("script path cannot be empty"),
-        "Should mention empty script: {}",
-        err
-    );
+    let err = config
+        .validate("test")
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(
+        err,
+        ValidatorError::InvalidConfig { reason, .. } if reason.contains("script path cannot be empty")
+    ));
 }
 
 /// Test: ValidatorConfig.validate() passes for valid config
@@ -180,5 +185,5 @@ fn validator_config_validate_passes_for_valid_config() {
         exec_command: None,
     };
 
-    config.validate().expect("should pass validation");
+    config.validate("osquery").expect("should pass validation");
 }

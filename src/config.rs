@@ -5,7 +5,9 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use anyhow::{bail, Result};
+use anyhow::Result;
+
+use crate::error::ValidatorError;
 use serde::Deserialize;
 
 /// Configuration for a single validator
@@ -48,7 +50,10 @@ impl Config {
     /// Returns error if the config section is missing or malformed.
     pub fn from_context(ctx: &mdbook::preprocess::PreprocessorContext) -> Result<Self> {
         let Some(table) = ctx.config.get_preprocessor("validator") else {
-            bail!("No [preprocessor.validator] section in book.toml");
+            return Err(ValidatorError::Config {
+                message: "No [preprocessor.validator] section in book.toml".into(),
+            }
+            .into());
         };
 
         // Convert toml::Table to our Config struct via toml::Value
@@ -64,9 +69,10 @@ impl Config {
     /// Returns error if the validator is not defined.
     pub fn get_validator(&self, name: &str) -> Result<&ValidatorConfig> {
         self.validators.get(name).ok_or_else(|| {
-            anyhow::anyhow!(
-                "Unknown validator '{name}'. Define it in book.toml under [preprocessor.validator.validators.{name}]"
-            )
+            ValidatorError::UnknownValidator {
+                name: name.to_owned(),
+            }
+            .into()
         })
     }
 }
@@ -77,12 +83,20 @@ impl ValidatorConfig {
     /// # Errors
     ///
     /// Returns error if container or script are empty.
-    pub fn validate(&self) -> Result<()> {
+    pub fn validate(&self, name: &str) -> Result<()> {
         if self.container.is_empty() {
-            bail!("Validator container cannot be empty");
+            return Err(ValidatorError::InvalidConfig {
+                name: name.to_owned(),
+                reason: "container cannot be empty".into(),
+            }
+            .into());
         }
         if self.script.as_os_str().is_empty() {
-            bail!("Validator script path cannot be empty");
+            return Err(ValidatorError::InvalidConfig {
+                name: name.to_owned(),
+                reason: "script path cannot be empty".into(),
+            }
+            .into());
         }
         Ok(())
     }
@@ -91,6 +105,7 @@ impl ValidatorConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::error::ValidatorError;
 
     // ==================== ValidatorConfig tests ====================
 
@@ -101,7 +116,7 @@ mod tests {
             script: PathBuf::from("validators/validate.sh"),
             exec_command: None,
         };
-        assert!(config.validate().is_ok());
+        assert!(config.validate("test").is_ok());
     }
 
     #[test]
@@ -111,8 +126,15 @@ mod tests {
             script: PathBuf::from("validators/validate.sh"),
             exec_command: None,
         };
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("container cannot be empty"));
+        let err = config
+            .validate("test")
+            .unwrap_err()
+            .downcast::<ValidatorError>()
+            .expect("should be ValidatorError");
+        assert!(matches!(
+            err,
+            ValidatorError::InvalidConfig { reason, .. } if reason.contains("container cannot be empty")
+        ));
     }
 
     #[test]
@@ -122,8 +144,15 @@ mod tests {
             script: PathBuf::new(),
             exec_command: None,
         };
-        let err = config.validate().unwrap_err();
-        assert!(err.to_string().contains("script path cannot be empty"));
+        let err = config
+            .validate("test")
+            .unwrap_err()
+            .downcast::<ValidatorError>()
+            .expect("should be ValidatorError");
+        assert!(matches!(
+            err,
+            ValidatorError::InvalidConfig { reason, .. } if reason.contains("script path cannot be empty")
+        ));
     }
 
     #[test]
@@ -133,7 +162,7 @@ mod tests {
             script: PathBuf::from("validators/validate.sh"),
             exec_command: Some("sqlite3 -json /tmp/test.db".to_owned()),
         };
-        assert!(config.validate().is_ok());
+        assert!(config.validate("test").is_ok());
         assert_eq!(
             config.exec_command,
             Some("sqlite3 -json /tmp/test.db".to_owned())
@@ -169,9 +198,14 @@ mod tests {
         let config = Config::default();
         let result = config.get_validator("nonexistent");
         assert!(result.is_err());
-        let err = result.unwrap_err();
-        assert!(err.to_string().contains("Unknown validator"));
-        assert!(err.to_string().contains("nonexistent"));
+        let err = result
+            .unwrap_err()
+            .downcast::<ValidatorError>()
+            .expect("should be ValidatorError");
+        assert!(matches!(
+            err,
+            ValidatorError::UnknownValidator { name } if name == "nonexistent"
+        ));
     }
 
     #[test]

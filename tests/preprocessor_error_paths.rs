@@ -24,18 +24,40 @@ fn chapter_with_subs(name: &str, content: &str, subs: Vec<Chapter>) -> Chapter {
     chapter
 }
 
+/// Creates a test config with sqlite validator
+fn create_sqlite_config() -> Config {
+    let mut validators = HashMap::new();
+    validators.insert(
+        "sqlite".to_string(),
+        ValidatorConfig {
+            container: "keinos/sqlite3:3.47.2".to_string(),
+            script: PathBuf::from("validators/validate-sqlite.sh"),
+            exec_command: Some("sqlite3 -json /tmp/test.db".to_string()),
+        },
+    );
+
+    Config {
+        validators,
+        fail_fast: true,
+        fixtures_dir: None,
+    }
+}
+
 // =============================================================================
 // Test 1: Nested chapters with sub_items (recursive processing)
 // Target: preprocessor.rs:175-179, 194-201
 // =============================================================================
 #[test]
 fn test_nested_chapters_validate_recursively() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     // Create a sub-chapter with a validator block
     let sub_chapter = Chapter::new(
         "Sub Chapter",
         r#"# Sub Chapter
 
-```sql validator=test
+```sql validator=sqlite
 SELECT 'sub';
 ```
 "#
@@ -49,7 +71,7 @@ SELECT 'sub';
         "Parent Chapter",
         r#"# Parent Chapter
 
-```sql validator=test
+```sql validator=sqlite
 SELECT 'parent';
 ```
 "#,
@@ -61,8 +83,8 @@ SELECT 'parent';
 
     let preprocessor = ValidatorPreprocessor::new();
 
-    // Uses default validator that always passes (exit 0)
-    let result = preprocessor.process_book(book);
+    // Uses real sqlite validator
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     assert!(
         result.is_ok(),
@@ -98,6 +120,9 @@ SELECT 'parent';
 // =============================================================================
 #[test]
 fn test_empty_chapter_returns_early() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let chapter = Chapter::new(
         "Empty Chapter",
         String::new(),
@@ -109,7 +134,7 @@ fn test_empty_chapter_returns_early() {
     book.sections.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     assert!(
         result.is_ok(),
@@ -131,6 +156,9 @@ fn test_empty_chapter_returns_early() {
 // =============================================================================
 #[test]
 fn test_chapter_no_validator_blocks_unchanged() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let content = r#"# Regular Chapter
 
 Some regular content.
@@ -155,7 +183,7 @@ More text here.
     book.sections.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     assert!(
         result.is_ok(),
@@ -791,17 +819,20 @@ SELECT 1;
 }
 
 // =============================================================================
-// Test 15: Deeply nested chapters (3 levels) with simple path
+// Test 15: Deeply nested chapters (3 levels) with config path
 // Target: preprocessor.rs:175-179 (deeper recursive call)
 // =============================================================================
 #[test]
-fn test_deeply_nested_chapters_simple_path() {
+fn test_deeply_nested_chapters_with_config() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     // Create a 3-level deep nesting
     let level3 = Chapter::new(
         "Level 3",
         r#"# Level 3
 
-```sql validator=test
+```sql validator=sqlite
 SELECT 'level3';
 ```
 "#
@@ -814,7 +845,7 @@ SELECT 'level3';
         "Level 2",
         r#"# Level 2
 
-```sql validator=test
+```sql validator=sqlite
 SELECT 'level2';
 ```
 "#,
@@ -825,7 +856,7 @@ SELECT 'level2';
         "Level 1",
         r#"# Level 1
 
-```sql validator=test
+```sql validator=sqlite
 SELECT 'level1';
 ```
 "#,
@@ -836,7 +867,7 @@ SELECT 'level1';
     book.sections.push(BookItem::Chapter(level1));
 
     let preprocessor = ValidatorPreprocessor::new();
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     assert!(
         result.is_ok(),
@@ -902,14 +933,17 @@ SELECT 1;
 }
 
 // =============================================================================
-// Test 17: Chapter with skip attribute (simple path)
+// Test 17: Chapter with skip attribute (config path)
 // Target: preprocessor.rs:223-225 (skip branch in process_chapter)
 // =============================================================================
 #[test]
-fn test_skip_attribute_simple_path() {
+fn test_skip_attribute_with_config() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     let chapter_content = r#"# Test Chapter
 
-```sql validator=test skip
+```sql validator=sqlite skip
 SELECT 'this is skipped';
 ```
 "#;
@@ -925,7 +959,7 @@ SELECT 'this is skipped';
     book.sections.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
-    let result = preprocessor.process_book(book);
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     // Should succeed because skip blocks don't get validated
     assert!(result.is_ok(), "Skipped blocks should pass: {:?}", result);

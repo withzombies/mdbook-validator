@@ -6,6 +6,8 @@
 use std::sync::Arc;
 
 use anyhow::{Context, Result};
+
+use crate::error::ValidatorError;
 use bollard::container::LogOutput;
 use bollard::exec::{CreateExecOptions, StartExecOptions, StartExecResults};
 use futures_util::StreamExt;
@@ -36,7 +38,10 @@ async fn collect_exec_output(
             }
             Ok(_) => {}
             Err(e) => {
-                anyhow::bail!("Output stream error: {e}");
+                return Err(ValidatorError::ContainerExec {
+                    message: format!("Output stream error: {e}"),
+                }
+                .into());
             }
         }
     }
@@ -200,7 +205,10 @@ impl ValidatorContainer {
             .await?;
 
         let StartExecResults::Attached { output, .. } = start_result else {
-            anyhow::bail!("Exec should be attached but wasn't");
+            return Err(ValidatorError::ContainerExec {
+                message: "Exec should be attached but wasn't".into(),
+            }
+            .into());
         };
 
         collect_exec_output(self.docker.as_ref(), &exec_id, output).await
@@ -248,7 +256,10 @@ impl ValidatorContainer {
             .await?;
 
         let StartExecResults::Attached { output, .. } = start_result else {
-            anyhow::bail!("Exec should be attached but wasn't");
+            return Err(ValidatorError::ContainerExec {
+                message: "Exec should be attached but wasn't".into(),
+            }
+            .into());
         };
 
         collect_exec_output(self.docker.as_ref(), &exec_id, output).await
@@ -298,7 +309,10 @@ impl ValidatorContainer {
             .await?;
 
         let StartExecResults::Attached { output, mut input } = start_result else {
-            anyhow::bail!("Exec should be attached but wasn't");
+            return Err(ValidatorError::ContainerExec {
+                message: "Exec should be attached but wasn't".into(),
+            }
+            .into());
         };
 
         // Write stdin content and close to signal EOF

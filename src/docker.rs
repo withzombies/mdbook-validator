@@ -4,6 +4,8 @@
 //! to cover error paths (`create_exec` failure, `start_exec` failure, `inspect_exec` failure).
 
 use anyhow::Result;
+
+use crate::error::ValidatorError;
 use async_trait::async_trait;
 use bollard::exec::{CreateExecOptions, CreateExecResults, StartExecOptions, StartExecResults};
 use bollard::service::ExecInspectResponse;
@@ -58,7 +60,12 @@ impl DockerOperations for BollardDocker {
         self.inner
             .create_exec(container_id, options)
             .await
-            .map_err(|e| anyhow::anyhow!("create_exec failed: {e}"))
+            .map_err(|e| {
+                ValidatorError::ContainerExec {
+                    message: format!("create_exec failed: {e}"),
+                }
+                .into()
+            })
     }
 
     async fn start_exec(
@@ -66,17 +73,21 @@ impl DockerOperations for BollardDocker {
         exec_id: &str,
         options: Option<StartExecOptions>,
     ) -> Result<StartExecResults> {
-        self.inner
-            .start_exec(exec_id, options)
-            .await
-            .map_err(|e| anyhow::anyhow!("start_exec failed: {e}"))
+        self.inner.start_exec(exec_id, options).await.map_err(|e| {
+            ValidatorError::ContainerExec {
+                message: format!("start_exec failed: {e}"),
+            }
+            .into()
+        })
     }
 
     async fn inspect_exec(&self, exec_id: &str) -> Result<ExecInspectResponse> {
-        self.inner
-            .inspect_exec(exec_id)
-            .await
-            .map_err(|e| anyhow::anyhow!("inspect_exec failed: {e}"))
+        self.inner.inspect_exec(exec_id).await.map_err(|e| {
+            ValidatorError::ContainerExec {
+                message: format!("inspect_exec failed: {e}"),
+            }
+            .into()
+        })
     }
 }
 

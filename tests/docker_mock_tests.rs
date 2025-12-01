@@ -11,12 +11,13 @@
 
 use std::sync::Arc;
 
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use async_trait::async_trait;
 use bollard::exec::{CreateExecOptions, CreateExecResults, StartExecOptions, StartExecResults};
 use bollard::service::ExecInspectResponse;
 use mdbook_validator::container::ValidatorContainer;
 use mdbook_validator::docker::DockerOperations;
+use mdbook_validator::error::ValidatorError;
 use testcontainers::{runners::AsyncRunner, GenericImage, ImageExt};
 
 /// Mock that fails on `create_exec`
@@ -31,7 +32,10 @@ impl DockerOperations for FailOnCreateExec {
         _container_id: &str,
         _options: CreateExecOptions<String>,
     ) -> Result<CreateExecResults> {
-        Err(anyhow!("{}", self.error_message))
+        Err(ValidatorError::ContainerExec {
+            message: format!("create_exec failed: {}", self.error_message),
+        }
+        .into())
     }
 
     async fn start_exec(
@@ -69,7 +73,10 @@ impl DockerOperations for FailOnStartExec {
         _exec_id: &str,
         _options: Option<StartExecOptions>,
     ) -> Result<StartExecResults> {
-        Err(anyhow!("{}", self.error_message))
+        Err(ValidatorError::ContainerExec {
+            message: format!("start_exec failed: {}", self.error_message),
+        }
+        .into())
     }
 
     async fn inspect_exec(&self, _exec_id: &str) -> Result<ExecInspectResponse> {
@@ -100,7 +107,11 @@ async fn test_create_exec_failure_returns_error() {
     let result = validator.exec_raw(&["echo", "test"]).await;
 
     assert!(result.is_err(), "Expected error when create_exec fails");
-    let err = result.unwrap_err();
+    let err = result
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
     assert!(
         err.to_string().contains("container not found"),
         "Error should contain our message: {}",
@@ -129,7 +140,11 @@ async fn test_start_exec_failure_returns_error() {
     let result = validator.exec_raw(&["echo", "test"]).await;
 
     assert!(result.is_err(), "Expected error when start_exec fails");
-    let err = result.unwrap_err();
+    let err = result
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
     assert!(
         err.to_string().contains("exec instance not running"),
         "Error should contain our message: {}",
@@ -155,7 +170,16 @@ async fn test_exec_with_env_create_exec_failure() {
     let result = validator.exec_with_env(None, "content", None, None).await;
 
     assert!(result.is_err(), "Expected error when create_exec fails");
-    assert!(result.unwrap_err().to_string().contains("container paused"));
+    let err = result
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    assert!(
+        err.to_string().contains("container paused"),
+        "Error should contain our message: {}",
+        err
+    );
 }
 
 #[tokio::test]
@@ -176,10 +200,16 @@ async fn test_exec_with_stdin_create_exec_failure() {
     let result = validator.exec_with_stdin(&["cat"], "input").await;
 
     assert!(result.is_err(), "Expected error when create_exec fails");
-    assert!(result
+    let err = result
         .unwrap_err()
-        .to_string()
-        .contains("no such container"));
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
+    assert!(
+        err.to_string().contains("no such container"),
+        "Error should contain our message: {}",
+        err
+    );
 }
 
 // === inspect_exec failure test ===
@@ -203,7 +233,11 @@ async fn test_inspect_exec_failure_returns_error() {
     let result = bollard_docker.inspect_exec("nonexistent-exec-id").await;
 
     assert!(result.is_err(), "Expected error for invalid exec ID");
-    let err = result.unwrap_err();
+    let err = result
+        .unwrap_err()
+        .downcast::<ValidatorError>()
+        .expect("should be ValidatorError");
+    assert!(matches!(err, ValidatorError::ContainerExec { .. }));
     assert!(
         err.to_string().contains("inspect_exec failed"),
         "Error should be wrapped with context: {}",

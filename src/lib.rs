@@ -6,9 +6,11 @@ pub mod command;
 pub mod config;
 pub mod container;
 pub mod docker;
+pub mod error;
 pub mod host_validator;
 pub mod parser;
 pub mod preprocessor;
 pub mod transpiler;
 
+pub use error::ValidatorError;
 pub use preprocessor::ValidatorPreprocessor;

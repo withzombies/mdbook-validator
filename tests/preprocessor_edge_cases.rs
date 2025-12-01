@@ -54,12 +54,34 @@ async fn container_id_returns_valid_docker_id() {
     );
 }
 
+/// Creates a test config with sqlite validator
+fn create_sqlite_config() -> Config {
+    let mut validators = HashMap::new();
+    validators.insert(
+        "sqlite".to_string(),
+        ValidatorConfig {
+            container: "keinos/sqlite3:3.47.2".to_string(),
+            script: PathBuf::from("validators/validate-sqlite.sh"),
+            exec_command: Some("sqlite3 -json /tmp/test.db".to_string()),
+        },
+    );
+
+    Config {
+        validators,
+        fail_fast: true,
+        fixtures_dir: None,
+    }
+}
+
 // =============================================================================
 // Test 3: Skip attribute in code block
 // Target: preprocessor.rs:222-223, 282-283
 // =============================================================================
 #[test]
 fn preprocessor_skips_validation_with_skip_attribute() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
     // Create chapter with skip attribute - validation should be skipped
     // but content should remain in output
     let chapter_content = r#"# Test Chapter
@@ -82,7 +104,8 @@ Text after.
     book.sections.push(BookItem::Chapter(chapter));
 
     let preprocessor = ValidatorPreprocessor::new();
-    let result = preprocessor.process_book(book);
+    // Use process_book_with_config - skip attribute prevents validation
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
 
     match result {
         Ok(processed_book) => {
