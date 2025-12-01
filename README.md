@@ -93,15 +93,21 @@ SELECT name FROM users WHERE id = 1;
 
 ### Block Markers
 
-| Marker | Purpose |
-|--------|---------|
-| `<!--SETUP-->` | Shell command(s) run in container before the query (e.g., `sqlite3 /tmp/test.db "CREATE TABLE..."`) |
-| `<!--ASSERT-->` | Output validation rules |
-| `<!--EXPECT-->` | Exact output matching (JSON) |
+| Marker | Purpose | Runs? |
+|--------|---------|-------|
+| `<!--SETUP-->` | Shell commands to prepare state (create tables, trigger events, write files) | **Yes** - in container via `sh -c` |
+| `<!--ASSERT-->` | Output validation rules (row counts, string matching) | No - passed to validator script |
+| `<!--EXPECT-->` | Exact output matching for regression testing | No - passed to validator script |
 
 ### Line Prefix: `@@`
 
-Lines starting with `@@` are sent to the validator but hidden from readers. Use this to show only relevant portions of a config while validating the complete file.
+**Important:** `@@` does NOT execute anything. It only controls what readers see.
+
+Lines starting with `@@` are:
+- ✅ **Included** in content sent to container for validation
+- ❌ **Hidden** from rendered documentation output
+
+Use this to validate complete configs while showing only the relevant portion to readers.
 
 ````markdown
 ```toml validator=config-check
@@ -225,6 +231,47 @@ stdout_contains ""
 -->
 ```
 ````
+
+### Custom Container with Plugin (Advanced)
+
+For validating custom osquery plugins or extensions, use a custom Docker image with SETUP to trigger events:
+
+**1. Create Dockerfile with your plugin:**
+```dockerfile
+FROM osquery/osquery:5.17.0-ubuntu22.04
+COPY my-plugin.ext /usr/local/lib/osquery/
+RUN echo "/usr/local/lib/osquery/my-plugin.ext" >> /etc/osquery/extensions.load
+```
+
+**2. Configure in book.toml:**
+```toml
+[preprocessor.validator.validators.my-plugin]
+container = "my-osquery-plugin:latest"
+script = "validators/validate-osquery.sh"
+```
+
+**3. Write validated examples with SETUP:**
+````markdown
+```sql validator=my-plugin
+<!--SETUP
+# Trigger event that populates your plugin's table
+curl -X POST http://localhost:8080/trigger-event
+sleep 1
+-->
+SELECT * FROM my_plugin_events WHERE event_type = 'login';
+<!--ASSERT
+rows >= 1
+contains "login"
+-->
+```
+````
+
+**Execution flow:**
+1. Container starts with your plugin loaded
+2. SETUP runs `curl` and `sleep` (in container, via `sh -c`)
+3. Query runs against your plugin's table (in container)
+4. JSON output goes to validator script (on host)
+5. Assertions checked, pass/fail returned
 
 ### Skip Validation
 
@@ -430,17 +477,112 @@ See `validators/validate-template.sh` for a comprehensive template with all asse
 3. **Marker collision** - If your code contains `-->`, it may break marker parsing
 4. **No line numbers in errors** - Error messages show file but not exact line
 
+## Execution Model
+
+Understanding where things run is critical for writing effective validations:
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                           HOST MACHINE                              │
+│                                                                     │
+│  ┌──────────────────┐                      ┌─────────────────────┐  │
+│  │  mdbook-validator │                      │  Validator Script   │  │
+│  │  (preprocessor)   │                      │  (e.g., validate-   │  │
+│  │                   │                      │   osquery.sh)       │  │
+│  │  1. Parse markdown│                      │                     │  │
+│  │  2. Extract blocks│                      │  7. Receive JSON    │  │
+│  │  3. Start container                      │  8. Check assertions│  │
+│  └────────┬──────────┘                      │  9. Exit 0 or fail  │  │
+│           │                                 └──────────▲──────────┘  │
+│           │                                            │             │
+│           ▼                                            │             │
+│  ┌────────────────────────────────────────────────────┼──────────┐  │
+│  │                    DOCKER CONTAINER                 │          │  │
+│  │                                                     │          │  │
+│  │   4. Run SETUP via `sh -c "<setup content>"`        │          │  │
+│  │      (CREATE TABLE, trigger events, etc.)           │          │  │
+│  │                                                     │          │  │
+│  │   5. Run main code via `exec_command`               │          │  │
+│  │      (osqueryi --json, sqlite3 -json, etc.)    ─────┘          │  │
+│  │                                                JSON stdout     │  │
+│  │   6. Capture stdout → send to validator                        │  │
+│  │                                                                │  │
+│  └────────────────────────────────────────────────────────────────┘  │
+│                                                                     │
+└─────────────────────────────────────────────────────────────────────┘
+```
+
+### What Runs Where
+
+| Component | Runs In | Purpose |
+|-----------|---------|---------|
+| `<!--SETUP-->` content | **Container** via `sh -c` | Prepare state (create tables, trigger events, write files) |
+| Main code block | **Container** via `exec_command` | Execute the query/script being documented |
+| Validator script | **Host** | Validate the JSON output from container |
+| `jq` (for JSON parsing) | **Host** | Used by validator scripts |
+
+### Execution Order
+
+1. **SETUP** (if present) → Runs first, in container, via `sh -c "<setup content>"`
+2. **Main code** → Runs second, in container, via configured `exec_command`
+3. **Validator** → Runs last, on host, receives container's stdout
+
+### Common Confusion: `@@` vs `<!--SETUP-->`
+
+These serve **completely different purposes**:
+
+| Feature | `@@` prefix | `<!--SETUP-->` |
+|---------|-------------|----------------|
+| Purpose | **Hide lines** from rendered output | **Execute commands** before main code |
+| Runs? | No - it's just content filtering | Yes - runs in container via `sh -c` |
+| Use case | Show partial config, validate full config | Create tables, trigger events, prepare state |
+
+**Example - `@@` hides context lines:**
+````markdown
+```json validator=osquery-config
+@@{
+@@  "options": { "disable_events": false },
+@@  "schedule": {
+    "my_query": {
+      "query": "SELECT * FROM processes;",
+      "interval": 60
+    }
+@@  }
+@@}
+```
+````
+Reader sees only `my_query` section. Validator receives complete JSON.
+
+**Example - `<!--SETUP-->` prepares state:**
+````markdown
+```sql validator=osquery
+<!--SETUP
+touch /tmp/test-file.txt
+-->
+SELECT * FROM file WHERE path = '/tmp/test-file.txt';
+<!--ASSERT
+rows >= 1
+-->
+```
+````
+SETUP creates the file. Query runs after. Validator checks the result.
+
 ## How It Works
 
 1. mdBook calls the preprocessor with chapter content
 2. Preprocessor finds code blocks with `validator=` attribute
 3. Extracts markers (`<!--SETUP-->`, `<!--ASSERT-->`, `<!--EXPECT-->`) and `@@` lines
 4. Starts the specified container via testcontainers
-5. Runs SETUP shell command in container (if any)
-6. Runs the visible content via `exec_command` in container → captures JSON output
-7. Runs validator script on HOST with JSON output as stdin, assertions/expect as env vars
-8. On success: strips all markers, returns clean content to mdBook
-9. On failure: exits with error, build fails
+5. Runs SETUP content in container via `sh -c` (if present)
+6. Runs the visible content (plus `@@` lines) via `exec_command` in container
+7. Captures container stdout (JSON) and stderr
+8. Runs validator script **on host** with:
+   - stdin: JSON output from container
+   - `VALIDATOR_ASSERTIONS`: assertion rules
+   - `VALIDATOR_EXPECT`: expected output
+   - `VALIDATOR_CONTAINER_STDERR`: container stderr
+9. On success: strips all markers and `@@` lines, returns clean content to mdBook
+10. On failure: exits with error, build fails
 
 ## License
 
