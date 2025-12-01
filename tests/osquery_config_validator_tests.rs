@@ -180,3 +180,115 @@ async fn test_osquery_config_contains_assertion_fails() {
         stderr
     );
 }
+
+// ============================================================================
+// Empty/edge case tests
+// ============================================================================
+
+/// Test: Empty config string fails validation
+#[tokio::test]
+async fn test_osquery_config_empty_fails() {
+    let (exit_code, _, stderr) = run_osquery_config_validator("", None, None).await;
+    assert_ne!(exit_code, 0, "empty config should fail");
+    assert!(
+        stderr.to_lowercase().contains("empty"),
+        "stderr should mention empty config: {}",
+        stderr
+    );
+}
+
+// ============================================================================
+// Valid config structure tests
+// ============================================================================
+
+/// Test: Config with valid osquery options passes
+#[tokio::test]
+async fn test_osquery_config_with_valid_options_passes() {
+    let config = r#"{
+        "options": {
+            "logger_path": "/var/log/osquery",
+            "config_refresh": 300
+        }
+    }"#;
+    let (exit_code, _, stderr) = run_osquery_config_validator(config, None, None).await;
+    assert_eq!(
+        exit_code, 0,
+        "config with valid options should pass: {}",
+        stderr
+    );
+}
+
+/// Test: Config with scheduled queries passes
+#[tokio::test]
+async fn test_osquery_config_with_schedule_passes() {
+    let config = r#"{
+        "schedule": {
+            "system_info": {
+                "query": "SELECT * FROM system_info",
+                "interval": 3600
+            }
+        }
+    }"#;
+    let (exit_code, _, stderr) = run_osquery_config_validator(config, None, None).await;
+    assert_eq!(exit_code, 0, "config with schedule should pass: {}", stderr);
+}
+
+/// Test: Config with inline packs passes
+#[tokio::test]
+async fn test_osquery_config_with_packs_passes() {
+    let config = r#"{
+        "packs": {
+            "hardware_monitoring": {
+                "discovery": [],
+                "queries": {}
+            }
+        }
+    }"#;
+    let (exit_code, _, stderr) = run_osquery_config_validator(config, None, None).await;
+    assert_eq!(exit_code, 0, "config with packs should pass: {}", stderr);
+}
+
+// ============================================================================
+// EXPECT assertion tests
+// ============================================================================
+
+/// Test: EXPECT assertion passes when JSON matches exactly
+#[tokio::test]
+async fn test_osquery_config_expect_exact_match_passes() {
+    let config = r#"{"options": {}}"#;
+    let (exit_code, _, stderr) =
+        run_osquery_config_validator(config, None, Some(r#"{"options": {}}"#)).await;
+    assert_eq!(exit_code, 0, "exact match should pass: {}", stderr);
+}
+
+/// Test: EXPECT assertion fails when JSON differs
+#[tokio::test]
+async fn test_osquery_config_expect_mismatch_fails() {
+    let config = r#"{"options": {}}"#;
+    let (exit_code, _, stderr) =
+        run_osquery_config_validator(config, None, Some(r#"{"options": {"foo": "bar"}}"#)).await;
+    assert_ne!(exit_code, 0, "mismatch should fail");
+    assert!(
+        stderr.to_lowercase().contains("mismatch"),
+        "stderr should mention mismatch: {}",
+        stderr
+    );
+}
+
+// ============================================================================
+// Error handling tests
+// ============================================================================
+
+/// Test: Unknown assertion syntax rejected
+#[tokio::test]
+async fn test_osquery_config_unknown_assertion_fails() {
+    let config = r#"{"options": {}}"#;
+    // "rows = 5" is not a valid assertion for osquery-config validator
+    let (exit_code, _, stderr) = run_osquery_config_validator(config, Some("rows = 5"), None).await;
+    assert_ne!(exit_code, 0, "unknown assertion should fail");
+    assert!(
+        stderr.contains("Unknown assertion"),
+        "stderr should mention unknown assertion: {}",
+        stderr
+    );
+}
