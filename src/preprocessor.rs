@@ -73,18 +73,7 @@ impl Preprocessor for ValidatorPreprocessor {
     }
 }
 
-/// Default validator script that always passes (exit 0)
-const DEFAULT_VALIDATOR_SCRIPT: &[u8] = b"#!/bin/sh\nexit 0\n";
-
 impl ValidatorPreprocessor {
-    /// Process a book for validation without a `PreprocessorContext`.
-    ///
-    /// This is useful for testing when you don't have access to create a context.
-    /// Uses a default validator that always passes.
-    pub fn process_book(&self, book: Book) -> Result<Book, Error> {
-        self.process_book_with_script(book, DEFAULT_VALIDATOR_SCRIPT)
-    }
-
     /// Process a book with a custom validator script.
     ///
     /// This is primarily for testing different validator behaviors.
@@ -224,10 +213,11 @@ impl ValidatorPreprocessor {
                 continue;
             }
 
+            let validation_content = block.markers.validation_content();
             let result = container
                 .exec_with_env(
                     block.markers.setup.as_deref(),
-                    &block.markers.visible_content,
+                    &validation_content,
                     block.markers.assertions.as_deref(),
                     block.markers.expect.as_deref(),
                 )
@@ -358,7 +348,9 @@ impl ValidatorPreprocessor {
 
         // 2. Run query in container, get JSON output
         // Content is passed via stdin to avoid shell injection
-        let query_sql = block.markers.visible_content.trim();
+        // Use validation_content() to strip @@ prefix (but keep line content)
+        let query_sql = block.markers.validation_content();
+        let query_sql = query_sql.trim();
         if query_sql.is_empty() {
             return Err(Error::msg(format!(
                 "Validation failed in '{}' (validator: {}): Query content is empty",
@@ -459,11 +451,7 @@ impl ValidatorPreprocessor {
                 })?;
 
                 // Validate config values
-                validator_config.validate().map_err(|e| {
-                    Error::msg(format!(
-                        "Invalid validator config for '{validator_name}': {e}"
-                    ))
-                })?;
+                validator_config.validate(validator_name)?;
 
                 // Resolve and validate fixtures_dir if configured
                 let mount = if let Some(ref fixtures_dir) = config.fixtures_dir {

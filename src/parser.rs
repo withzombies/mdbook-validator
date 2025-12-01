@@ -38,6 +38,17 @@ pub struct ExtractedMarkers {
     pub visible_content: String,
 }
 
+impl ExtractedMarkers {
+    /// Get content for validation (with `@@` prefix stripped but lines kept).
+    ///
+    /// This returns `visible_content` with the `@@` prefix removed from each line,
+    /// but the line content is preserved (unlike output which removes entire lines).
+    #[must_use]
+    pub fn validation_content(&self) -> String {
+        strip_double_at_prefix(&self.visible_content)
+    }
+}
+
 /// Extracts markers from code block content.
 ///
 /// Parses `<!--SETUP-->`, `<!--ASSERT-->`, and `<!--EXPECT-->` blocks,
@@ -69,6 +80,24 @@ pub fn extract_markers(content: &str) -> ExtractedMarkers {
     remaining.trim().clone_into(&mut result.visible_content);
 
     result
+}
+
+/// Strips the `@@` prefix from lines while keeping the content.
+///
+/// This is used for validation content - `@@` lines should be validated
+/// but the `@@` prefix itself is not part of the syntax being validated.
+///
+/// # Examples
+///
+/// - `"@@SELECT 'hidden';\nSELECT 'visible';"` → `"SELECT 'hidden';\nSELECT 'visible';"`
+/// - `"@@\nvisible"` → `"\nvisible"` (empty @@ line becomes empty line)
+#[must_use]
+pub fn strip_double_at_prefix(content: &str) -> String {
+    content
+        .lines()
+        .map(|line| line.strip_prefix("@@").unwrap_or(line))
+        .collect::<Vec<_>>()
+        .join("\n")
 }
 
 /// Extracts content between a marker and `-->`.
@@ -237,5 +266,63 @@ mod tests {
         assert!(result.visible_content.contains("First line"));
         assert!(result.visible_content.contains("Second line"));
         assert!(result.visible_content.contains("SELECT 1"));
+    }
+
+    // ==================== strip_double_at_prefix tests ====================
+
+    #[test]
+    fn strip_double_at_prefix_strips_prefix() {
+        let content = "@@SELECT 'hidden';\nSELECT 'visible';";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, "SELECT 'hidden';\nSELECT 'visible';");
+    }
+
+    #[test]
+    fn strip_double_at_prefix_preserves_lines_without_prefix() {
+        let content = "SELECT 'visible';\nSELECT 'also visible';";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn strip_double_at_prefix_empty_at_line() {
+        // @@ alone becomes empty line
+        let content = "@@\nvisible";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, "\nvisible");
+    }
+
+    #[test]
+    fn strip_double_at_prefix_at_in_middle_unchanged() {
+        // @@ in middle of line is NOT stripped (must be at start)
+        let content = "line with @@ in middle";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, content);
+    }
+
+    #[test]
+    fn strip_double_at_prefix_multiple_at_lines() {
+        let content = "@@first\n@@second\nvisible\n@@third";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, "first\nsecond\nvisible\nthird");
+    }
+
+    #[test]
+    fn strip_double_at_prefix_only_at_lines() {
+        let content = "@@line1\n@@line2";
+        let result = strip_double_at_prefix(content);
+        assert_eq!(result, "line1\nline2");
+    }
+
+    // ==================== validation_content tests ====================
+
+    #[test]
+    fn extracted_markers_validation_content_strips_at_prefix() {
+        let content = "@@SELECT 'hidden';\nSELECT 'visible';";
+        let markers = extract_markers(content);
+        assert_eq!(
+            markers.validation_content(),
+            "SELECT 'hidden';\nSELECT 'visible';"
+        );
     }
 }
