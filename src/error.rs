@@ -50,10 +50,14 @@ pub enum ValidatorError {
     /// Script not found (E010)
     #[error("[E010] Script not found: {path}")]
     ScriptNotFound { path: String },
+
+    /// Mutually exclusive attributes (E011)
+    #[error("[E011] 'hidden' and 'skip' are mutually exclusive")]
+    MutuallyExclusiveAttributes,
 }
 
 impl ValidatorError {
-    /// Returns the error code (E001-E010) for this error variant.
+    /// Returns the error code (E001-E011) for this error variant.
     ///
     /// Error codes are stable and can be used for programmatic matching.
     #[must_use]
@@ -69,6 +73,7 @@ impl ValidatorError {
             Self::InvalidConfig { .. } => "E008",
             Self::FixturesError { .. } => "E009",
             Self::ScriptNotFound { .. } => "E010",
+            Self::MutuallyExclusiveAttributes => "E011",
         }
     }
 }

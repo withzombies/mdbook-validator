@@ -269,6 +269,13 @@ impl ValidatorPreprocessor {
             return Ok(());
         }
 
+        // Check for mutually exclusive attributes (fail fast)
+        for block in &blocks {
+            if block.skip && block.hidden {
+                return Err(Error::new(ValidatorError::MutuallyExclusiveAttributes));
+            }
+        }
+
         // Validate each block using configured validator
         for block in &blocks {
             if block.skip {
@@ -528,7 +535,7 @@ impl ValidatorPreprocessor {
                 Event::End(TagEnd::CodeBlock) if in_code_block => {
                     in_code_block = false;
 
-                    let (_language, validator, skip) = parse_info_string(&current_info);
+                    let (_language, validator, skip, hidden) = parse_info_string(&current_info);
 
                     // Only process blocks with validator= attribute
                     if let Some(validator_name) = validator {
@@ -539,6 +546,7 @@ impl ValidatorPreprocessor {
                                 validator_name,
                                 markers,
                                 skip,
+                                hidden,
                             });
                         }
                     }
@@ -550,25 +558,39 @@ impl ValidatorPreprocessor {
         blocks
     }
 
-    /// Strip all validation markers from chapter content, preserving code block structure
+    /// Strip all validation markers from chapter content, preserving code block structure.
+    ///
+    /// If a code block has the `hidden` attribute, the entire fence is removed from output.
     fn strip_markers_from_chapter(content: &str) -> String {
         let mut result = String::new();
         let parser = Parser::new(content);
 
         let mut in_code_block = false;
         let mut current_info = String::new();
+        let mut current_hidden = false;
 
         for event in parser {
             match &event {
                 Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
                     in_code_block = true;
                     current_info = info.to_string();
-                    result.push_str("```");
-                    result.push_str(&current_info);
-                    result.push('\n');
+                    let (_language, _validator, _skip, hidden) = parse_info_string(&current_info);
+                    current_hidden = hidden;
+
+                    // Only write opening fence if not hidden
+                    if !current_hidden {
+                        result.push_str("```");
+                        result.push_str(&current_info);
+                        result.push('\n');
+                    }
                 }
                 Event::Text(text) if in_code_block => {
-                    let (_language, validator, _skip) = parse_info_string(&current_info);
+                    // Skip content entirely for hidden blocks
+                    if current_hidden {
+                        continue;
+                    }
+
+                    let (_language, validator, _skip, _hidden) = parse_info_string(&current_info);
 
                     // Strip markers only from blocks with validator= attribute
                     if validator.is_some() {
@@ -585,15 +607,21 @@ impl ValidatorPreprocessor {
                 }
                 Event::End(TagEnd::CodeBlock) if in_code_block => {
                     in_code_block = false;
-                    result.push_str("```\n");
+                    // Only write closing fence if not hidden
+                    if !current_hidden {
+                        result.push_str("```\n");
+                    }
+                    current_hidden = false;
                 }
                 Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)) => {
                     // Handle indented code blocks - pass through unchanged
                     in_code_block = true;
                     current_info.clear();
+                    current_hidden = false;
                 }
                 Event::End(TagEnd::CodeBlock) => {
                     in_code_block = false;
+                    current_hidden = false;
                 }
                 Event::SoftBreak | Event::HardBreak => {
                     if !in_code_block {
@@ -626,4 +654,159 @@ struct ValidatorBlock {
     markers: ExtractedMarkers,
     /// Whether to skip validation
     skip: bool,
+    /// Whether to hide the block from output (but still validate)
+    hidden: bool,
+}
+
+#[cfg(test)]
+#[allow(clippy::needless_raw_string_hashes)]
+mod tests {
+    use super::*;
+
+    // ==================== strip_markers_from_chapter hidden block tests ====================
+
+    #[test]
+    fn strip_markers_from_chapter_removes_hidden_block() {
+        let content = r#"Some text
+
+```sql validator=sqlite hidden
+SELECT 1;
+```
+
+More text"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Hidden block should be completely removed
+        assert!(!result.contains("SELECT 1"));
+        assert!(!result.contains("```sql"));
+        assert!(result.contains("Some text"));
+        assert!(result.contains("More text"));
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_keeps_non_hidden_block() {
+        let content = r#"Some text
+
+```sql validator=sqlite
+SELECT 1;
+```
+
+More text"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Non-hidden block should be kept (with markers stripped)
+        assert!(result.contains("SELECT 1"));
+        assert!(result.contains("```sql"));
+        assert!(result.contains("Some text"));
+        assert!(result.contains("More text"));
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_mixed_hidden_and_non_hidden() {
+        let content = r#"Start
+
+```sql validator=sqlite hidden
+HIDDEN QUERY;
+```
+
+Middle
+
+```sql validator=sqlite
+VISIBLE QUERY;
+```
+
+End"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Hidden block removed, non-hidden kept
+        assert!(!result.contains("HIDDEN QUERY"));
+        assert!(result.contains("VISIBLE QUERY"));
+        assert!(result.contains("Start"));
+        assert!(result.contains("Middle"));
+        assert!(result.contains("End"));
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_adjacent_hidden_blocks() {
+        let content = r#"Start
+
+```sql validator=sqlite hidden
+HIDDEN 1;
+```
+
+```sql validator=sqlite hidden
+HIDDEN 2;
+```
+
+End"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Both hidden blocks should be removed
+        assert!(!result.contains("HIDDEN 1"));
+        assert!(!result.contains("HIDDEN 2"));
+        assert!(result.contains("Start"));
+        assert!(result.contains("End"));
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_hidden_block_at_start() {
+        let content = r#"```sql validator=sqlite hidden
+HIDDEN;
+```
+
+Visible content"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Hidden block at start should not leave leading whitespace
+        assert!(!result.contains("HIDDEN"));
+        assert!(result.contains("Visible content"));
+        // Should not start with blank lines
+        assert!(!result.starts_with('\n'));
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_hidden_block_at_end() {
+        let content = r#"Visible content
+
+```sql validator=sqlite hidden
+HIDDEN;
+```"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Hidden block at end should not leave trailing whitespace
+        assert!(!result.contains("HIDDEN"));
+        assert!(result.contains("Visible content"));
+        // Should not end with excessive blank lines
+        assert!(!result.ends_with("\n\n"));
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_only_hidden_block() {
+        let content = r#"```sql validator=sqlite hidden
+HIDDEN;
+```"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Single hidden block should result in empty output
+        assert!(!result.contains("HIDDEN"));
+        assert!(result.is_empty() || result.trim().is_empty());
+    }
+
+    #[test]
+    fn strip_markers_from_chapter_hidden_with_markers() {
+        let content = r#"Text
+
+```sql validator=sqlite hidden
+<!--SETUP
+CREATE TABLE t;
+-->
+SELECT * FROM t;
+<!--ASSERT
+rows >= 1
+-->
+```
+
+More text"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Hidden block with markers should be completely removed
+        assert!(!result.contains("SETUP"));
+        assert!(!result.contains("ASSERT"));
+        assert!(!result.contains("CREATE TABLE"));
+        assert!(!result.contains("SELECT"));
+        assert!(result.contains("Text"));
+        assert!(result.contains("More text"));
+    }
 }

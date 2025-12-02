@@ -5,29 +5,32 @@ use mdbook_validator::parser::{extract_markers, parse_info_string};
 
 #[test]
 fn parse_info_string_extracts_language_and_validator() {
-    let (lang, validator, skip) = parse_info_string("sql validator=sqlite");
+    let (lang, validator, skip, hidden) = parse_info_string("sql validator=sqlite");
 
     assert_eq!(lang, "sql");
     assert_eq!(validator, Some("sqlite".to_string()));
     assert!(!skip);
+    assert!(!hidden);
 }
 
 #[test]
 fn parse_info_string_extracts_language_only() {
-    let (lang, validator, skip) = parse_info_string("rust");
+    let (lang, validator, skip, hidden) = parse_info_string("rust");
 
     assert_eq!(lang, "rust");
     assert_eq!(validator, None);
     assert!(!skip);
+    assert!(!hidden);
 }
 
 #[test]
 fn parse_info_string_handles_skip_attribute() {
-    let (lang, validator, skip) = parse_info_string("sql validator=osquery skip");
+    let (lang, validator, skip, hidden) = parse_info_string("sql validator=osquery skip");
 
     assert_eq!(lang, "sql");
     assert_eq!(validator, Some("osquery".to_string()));
     assert!(skip);
+    assert!(!hidden);
 }
 
 #[test]
@@ -87,28 +90,31 @@ rows >= 1
 
 #[test]
 fn parse_info_string_empty_string() {
-    let (lang, validator, skip) = parse_info_string("");
+    let (lang, validator, skip, hidden) = parse_info_string("");
     assert_eq!(lang, "");
     assert_eq!(validator, None);
     assert!(!skip);
+    assert!(!hidden);
 }
 
 #[test]
 fn parse_info_string_empty_validator_value() {
     // `sql validator=` should be treated as no validator (not Some(""))
-    let (lang, validator, skip) = parse_info_string("sql validator=");
+    let (lang, validator, skip, hidden) = parse_info_string("sql validator=");
     assert_eq!(lang, "sql");
     assert_eq!(validator, None); // Empty = no validator
     assert!(!skip);
+    assert!(!hidden);
 }
 
 #[test]
 fn parse_info_string_whitespace_only_validator() {
     // `sql validator= skip` - the whitespace after = means empty value
-    let (lang, validator, skip) = parse_info_string("sql validator= skip");
+    let (lang, validator, skip, hidden) = parse_info_string("sql validator= skip");
     assert_eq!(lang, "sql");
     assert_eq!(validator, None); // Empty = no validator
     assert!(skip);
+    assert!(!hidden);
 }
 
 // === extract_markers edge cases ===

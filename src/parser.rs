@@ -2,15 +2,16 @@
 
 /// Parses an info string from a fenced code block.
 ///
-/// Returns `(language, validator, skip)` tuple.
+/// Returns `(language, validator, skip, hidden)` tuple.
 ///
 /// # Examples
 ///
-/// - `"sql validator=sqlite"` → `("sql", Some("sqlite"), false)`
-/// - `"rust"` → `("rust", None, false)`
-/// - `"sql validator=osquery skip"` → `("sql", Some("osquery"), true)`
+/// - `"sql validator=sqlite"` → `("sql", Some("sqlite"), false, false)`
+/// - `"rust"` → `("rust", None, false, false)`
+/// - `"sql validator=osquery skip"` → `("sql", Some("osquery"), true, false)`
+/// - `"sql validator=sqlite hidden"` → `("sql", Some("sqlite"), false, true)`
 #[must_use]
-pub fn parse_info_string(info: &str) -> (String, Option<String>, bool) {
+pub fn parse_info_string(info: &str) -> (String, Option<String>, bool, bool) {
     let parts: Vec<&str> = info.split_whitespace().collect();
 
     let language = parts.first().map_or(String::new(), |s| (*s).to_owned());
@@ -21,8 +22,9 @@ pub fn parse_info_string(info: &str) -> (String, Option<String>, bool) {
         .filter(|v| !v.is_empty());
 
     let skip = parts.contains(&"skip");
+    let hidden = parts.contains(&"hidden");
 
-    (language, validator, skip)
+    (language, validator, skip, hidden)
 }
 
 /// Result of extracting markers from code block content.
@@ -124,66 +126,133 @@ mod tests {
 
     #[test]
     fn parse_info_string_language_only() {
-        let (lang, validator, skip) = parse_info_string("sql");
+        let (lang, validator, skip, hidden) = parse_info_string("sql");
         assert_eq!(lang, "sql");
         assert_eq!(validator, None);
         assert!(!skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_with_validator() {
-        let (lang, validator, skip) = parse_info_string("sql validator=sqlite");
+        let (lang, validator, skip, hidden) = parse_info_string("sql validator=sqlite");
         assert_eq!(lang, "sql");
         assert_eq!(validator, Some("sqlite".to_owned()));
         assert!(!skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_with_skip() {
-        let (lang, validator, skip) = parse_info_string("sql validator=osquery skip");
+        let (lang, validator, skip, hidden) = parse_info_string("sql validator=osquery skip");
         assert_eq!(lang, "sql");
         assert_eq!(validator, Some("osquery".to_owned()));
         assert!(skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_skip_without_validator() {
-        let (lang, validator, skip) = parse_info_string("bash skip");
+        let (lang, validator, skip, hidden) = parse_info_string("bash skip");
         assert_eq!(lang, "bash");
         assert_eq!(validator, None);
         assert!(skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_empty() {
-        let (lang, validator, skip) = parse_info_string("");
+        let (lang, validator, skip, hidden) = parse_info_string("");
         assert_eq!(lang, "");
         assert_eq!(validator, None);
         assert!(!skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_extra_whitespace() {
-        let (lang, validator, skip) = parse_info_string("  sql   validator=sqlite   skip  ");
+        let (lang, validator, skip, hidden) =
+            parse_info_string("  sql   validator=sqlite   skip  ");
         assert_eq!(lang, "sql");
         assert_eq!(validator, Some("sqlite".to_owned()));
         assert!(skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_empty_validator_ignored() {
-        let (lang, validator, skip) = parse_info_string("sql validator=");
+        let (lang, validator, skip, hidden) = parse_info_string("sql validator=");
         assert_eq!(lang, "sql");
         assert_eq!(validator, None); // Empty validator is filtered out
         assert!(!skip);
+        assert!(!hidden);
     }
 
     #[test]
     fn parse_info_string_multiple_validators_takes_first() {
-        let (lang, validator, skip) = parse_info_string("sql validator=first validator=second");
+        let (lang, validator, skip, hidden) =
+            parse_info_string("sql validator=first validator=second");
         assert_eq!(lang, "sql");
         assert_eq!(validator, Some("first".to_owned()));
         assert!(!skip);
+        assert!(!hidden);
+    }
+
+    // ==================== hidden attribute tests ====================
+
+    #[test]
+    fn parse_info_string_with_hidden() {
+        let (lang, validator, skip, hidden) = parse_info_string("sql validator=sqlite hidden");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("sqlite".to_owned()));
+        assert!(!skip);
+        assert!(hidden);
+    }
+
+    #[test]
+    fn parse_info_string_hidden_order_independent() {
+        let (lang, validator, skip, hidden) = parse_info_string("sql hidden validator=sqlite");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("sqlite".to_owned()));
+        assert!(!skip);
+        assert!(hidden);
+    }
+
+    #[test]
+    fn parse_info_string_hidden_without_validator() {
+        let (lang, validator, skip, hidden) = parse_info_string("bash hidden");
+        assert_eq!(lang, "bash");
+        assert_eq!(validator, None);
+        assert!(!skip);
+        assert!(hidden);
+    }
+
+    #[test]
+    fn parse_info_string_skip_only() {
+        let (lang, validator, skip, hidden) = parse_info_string("sql skip");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, None);
+        assert!(skip);
+        assert!(!hidden);
+    }
+
+    #[test]
+    fn parse_info_string_neither_skip_nor_hidden() {
+        let (lang, validator, skip, hidden) = parse_info_string("sql");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, None);
+        assert!(!skip);
+        assert!(!hidden);
+    }
+
+    #[test]
+    fn parse_info_string_both_skip_and_hidden() {
+        // Parser returns both flags; mutual exclusivity checked at higher level
+        let (lang, validator, skip, hidden) = parse_info_string("sql validator=sqlite skip hidden");
+        assert_eq!(lang, "sql");
+        assert_eq!(validator, Some("sqlite".to_owned()));
+        assert!(skip);
+        assert!(hidden);
     }
 
     // ==================== extract_markers tests ====================
