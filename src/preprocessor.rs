@@ -582,85 +582,126 @@ impl ValidatorPreprocessor {
 
     /// Strip all validation markers from chapter content, preserving code block structure.
     ///
+    /// Uses span-based editing to surgically modify only code block contents,
+    /// preserving ALL other markdown formatting (lists, links, emphasis, etc.).
+    ///
     /// If a code block has the `hidden` attribute, the entire fence is removed from output.
     fn strip_markers_from_chapter(content: &str) -> String {
-        let mut result = String::new();
-        let parser = Parser::new(content);
+        use std::ops::Range;
 
-        let mut in_code_block = false;
-        let mut current_info = String::new();
+        // Represents an edit to apply to the source
+        enum Edit {
+            /// Replace a range with new content (for stripping markers)
+            Replace {
+                range: Range<usize>,
+                content: String,
+            },
+            /// Delete a range entirely (for hidden blocks)
+            Delete { range: Range<usize> },
+        }
+
+        let mut edits: Vec<Edit> = Vec::new();
+        let parser = Parser::new(content).into_offset_iter();
+
+        let mut current_block_start: Option<usize> = None;
         let mut current_hidden = false;
+        let mut current_has_validator = false;
+        let mut current_content_range: Option<Range<usize>> = None;
 
-        for event in parser {
+        for (event, range) in parser {
             match &event {
                 Event::Start(Tag::CodeBlock(CodeBlockKind::Fenced(info))) => {
-                    in_code_block = true;
-                    current_info = info.to_string();
-                    let (_language, _validator, _skip, hidden) = parse_info_string(&current_info);
+                    let (_language, validator, _skip, hidden) = parse_info_string(info);
                     current_hidden = hidden;
-
-                    // Only write opening fence if not hidden
-                    if !current_hidden {
-                        result.push_str("```");
-                        result.push_str(&current_info);
-                        result.push('\n');
-                    }
+                    current_has_validator = validator.is_some();
+                    current_block_start = Some(range.start);
+                    current_content_range = None;
                 }
-                Event::Text(text) if in_code_block => {
-                    // Skip content entirely for hidden blocks
+                Event::Text(_) if current_block_start.is_some() => {
+                    // Track the content range within the code block
+                    current_content_range = Some(range);
+                }
+                Event::End(TagEnd::CodeBlock) if current_block_start.is_some() => {
+                    let Some(block_start) = current_block_start.take() else {
+                        unreachable!("current_block_start must be Some here")
+                    };
+
                     if current_hidden {
-                        continue;
-                    }
+                        // Delete the entire code block (including surrounding whitespace)
+                        // Find the start of the line containing the opening fence
+                        let line_start = content[..block_start].rfind('\n').map_or(0, |i| i + 1);
+                        // Find the end of the line containing the closing fence
+                        let line_end = content[range.end..]
+                            .find('\n')
+                            .map_or(range.end, |i| range.end + i + 1);
 
-                    let (_language, validator, _skip, _hidden) = parse_info_string(&current_info);
-
-                    // Strip markers only from blocks with validator= attribute
-                    if validator.is_some() {
-                        let stripped = strip_markers(text);
-                        // Trim and add back newline
-                        let trimmed = stripped.trim();
-                        if !trimmed.is_empty() {
-                            result.push_str(trimmed);
-                            result.push('\n');
+                        edits.push(Edit::Delete {
+                            range: line_start..line_end,
+                        });
+                    } else if current_has_validator {
+                        // Strip markers from the content, but preserve the fence
+                        if let Some(content_range) = current_content_range.take() {
+                            let original_content = &content[content_range.clone()];
+                            let stripped = strip_markers(original_content);
+                            let trimmed = stripped.trim();
+                            if trimmed != original_content.trim() {
+                                // Only create an edit if content actually changed
+                                edits.push(Edit::Replace {
+                                    range: content_range,
+                                    content: format!("{trimmed}\n"),
+                                });
+                            }
                         }
-                    } else {
-                        result.push_str(text);
                     }
-                }
-                Event::End(TagEnd::CodeBlock) if in_code_block => {
-                    in_code_block = false;
-                    // Only write closing fence if not hidden
-                    if !current_hidden {
-                        result.push_str("```\n");
-                    }
+
                     current_hidden = false;
-                }
-                Event::Start(Tag::CodeBlock(CodeBlockKind::Indented)) => {
-                    // Handle indented code blocks - pass through unchanged
-                    in_code_block = true;
-                    current_info.clear();
-                    current_hidden = false;
-                }
-                Event::End(TagEnd::CodeBlock) => {
-                    in_code_block = false;
-                    current_hidden = false;
-                }
-                Event::SoftBreak | Event::HardBreak => {
-                    if !in_code_block {
-                        result.push('\n');
-                    }
-                }
-                Event::Text(text) if !in_code_block => {
-                    result.push_str(text);
-                }
-                Event::End(TagEnd::Paragraph | TagEnd::Heading(_)) => {
-                    result.push_str("\n\n");
-                }
-                Event::Start(Tag::Heading { level, .. }) => {
-                    result.push_str(&"#".repeat(*level as usize));
-                    result.push(' ');
+                    current_has_validator = false;
                 }
                 _ => {}
+            }
+        }
+
+        // Apply edits from end to start to preserve byte offsets
+        edits.sort_by(|a, b| {
+            let a_start = match a {
+                Edit::Replace { range, .. } | Edit::Delete { range } => range.start,
+            };
+            let b_start = match b {
+                Edit::Replace { range, .. } | Edit::Delete { range } => range.start,
+            };
+            b_start.cmp(&a_start) // Reverse order (end to start)
+        });
+
+        let mut result = content.to_owned();
+        for edit in edits {
+            match edit {
+                Edit::Replace { range, content } => {
+                    result.replace_range(range, &content);
+                }
+                Edit::Delete { range } => {
+                    result.replace_range(range, "");
+                }
+            }
+        }
+
+        // Clean up any excessive blank lines left by deletions
+        Self::normalize_blank_lines(&result)
+    }
+
+    /// Normalize blank lines: collapse 3+ consecutive newlines to 2, trim edges
+    fn normalize_blank_lines(content: &str) -> String {
+        let mut result = String::with_capacity(content.len());
+        let mut consecutive_newlines = 0;
+
+        for ch in content.chars() {
+            if ch == '\n' {
+                consecutive_newlines += 1;
+                if consecutive_newlines <= 2 {
+                    result.push(ch);
+                }
+            } else {
+                consecutive_newlines = 0;
+                result.push(ch);
             }
         }
 
@@ -830,5 +871,485 @@ More text"#;
         assert!(!result.contains("SELECT"));
         assert!(result.contains("Text"));
         assert!(result.contains("More text"));
+    }
+
+    // ==================== Regression tests for markdown preservation ====================
+    // These tests ensure that strip_markers_from_chapter preserves all markdown formatting
+    // that exists OUTSIDE of code blocks with validator= attributes.
+
+    #[test]
+    fn strip_markers_preserves_lists() {
+        let content = r#"# Chapter
+
+Some text:
+
+- Item one
+- Item two
+- Item three
+
+### Next Section
+
+More text."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Lists must be preserved exactly
+        assert!(
+            result.contains("- Item one"),
+            "List items must be preserved"
+        );
+        assert!(
+            result.contains("- Item two"),
+            "List items must be preserved"
+        );
+        assert!(
+            result.contains("- Item three"),
+            "List items must be preserved"
+        );
+        assert!(
+            result.contains("### Next Section"),
+            "Headings must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_lists_with_code_block() {
+        let content = r#"# Chapter
+
+Some text:
+
+- Item one
+- Item two
+- Item three
+
+```sql validator=sqlite
+<!--SETUP
+CREATE TABLE t;
+-->
+SELECT 1;
+```
+
+### Next Section
+
+More text."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        // Lists must be preserved
+        assert!(
+            result.contains("- Item one"),
+            "List items must be preserved"
+        );
+        assert!(
+            result.contains("- Item two"),
+            "List items must be preserved"
+        );
+        assert!(
+            result.contains("- Item three"),
+            "List items must be preserved"
+        );
+        // Code block content stripped of markers but preserved
+        assert!(result.contains("SELECT 1"), "Code block content preserved");
+        assert!(!result.contains("SETUP"), "Markers stripped");
+        assert!(!result.contains("CREATE TABLE"), "Setup content stripped");
+        // Headings preserved
+        assert!(
+            result.contains("### Next Section"),
+            "Headings must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_numbered_lists() {
+        let content = r#"Steps:
+
+1. First step
+2. Second step
+3. Third step
+
+Done."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(
+            result.contains("1. First step"),
+            "Numbered lists must be preserved"
+        );
+        assert!(
+            result.contains("2. Second step"),
+            "Numbered lists must be preserved"
+        );
+        assert!(
+            result.contains("3. Third step"),
+            "Numbered lists must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_blockquotes() {
+        let content = r#"Quote:
+
+> This is a blockquote
+> with multiple lines
+
+End."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(
+            result.contains("> This is a blockquote"),
+            "Blockquotes must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_links() {
+        let content = r#"See [the documentation](https://example.com) for details.
+
+And [another link](https://other.com)."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(
+            result.contains("[the documentation](https://example.com)"),
+            "Links must be preserved"
+        );
+        assert!(
+            result.contains("[another link](https://other.com)"),
+            "Links must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_inline_code() {
+        let content = r#"Use the `SELECT` statement to query data.
+
+Also `INSERT` works."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(result.contains("`SELECT`"), "Inline code must be preserved");
+        assert!(result.contains("`INSERT`"), "Inline code must be preserved");
+    }
+
+    #[test]
+    fn strip_markers_preserves_emphasis() {
+        let content = r#"This is *italic* and **bold** text.
+
+Also _underscores_ and __double__."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(result.contains("*italic*"), "Italic must be preserved");
+        assert!(result.contains("**bold**"), "Bold must be preserved");
+    }
+
+    #[test]
+    fn strip_markers_preserves_tables() {
+        let content = r#"| Column A | Column B |
+|----------|----------|
+| Value 1  | Value 2  |
+| Value 3  | Value 4  |"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(
+            result.contains("| Column A | Column B |"),
+            "Tables must be preserved"
+        );
+        assert!(
+            result.contains("| Value 1  | Value 2  |"),
+            "Table rows must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_code_blocks_without_validator() {
+        let content = r#"Regular code:
+
+```python
+def hello():
+    print("world")
+```
+
+End."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+        assert!(result.contains("```python"), "Code fence must be preserved");
+        assert!(
+            result.contains("def hello():"),
+            "Code content must be preserved"
+        );
+        assert!(
+            result.contains("print(\"world\")"),
+            "Code content must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_complex_document() {
+        // This tests a realistic document with mixed content
+        let content = r#"# Getting Started
+
+Welcome to the guide. Here's what you'll learn:
+
+- How to query data
+- How to filter results
+- How to join tables
+
+## Basic Queries
+
+First, let's set up our database:
+
+```sql validator=sqlite hidden
+<!--SETUP
+CREATE TABLE users (id INTEGER, name TEXT);
+INSERT INTO users VALUES (1, 'Alice'), (2, 'Bob');
+-->
+SELECT 'setup complete';
+```
+
+Now run a simple query:
+
+```sql validator=sqlite
+SELECT * FROM users;
+<!--ASSERT
+rows >= 1
+-->
+```
+
+> **Note**: The query above returns all users.
+
+See [SQL documentation](https://sqlite.org) for more.
+
+### Summary
+
+1. We created a table
+2. We queried the data
+3. We verified the results
+
+Done!"#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+
+        // Lists preserved
+        assert!(
+            result.contains("- How to query data"),
+            "Bullet lists preserved"
+        );
+        assert!(
+            result.contains("1. We created a table"),
+            "Numbered lists preserved"
+        );
+
+        // Hidden block removed
+        assert!(
+            !result.contains("CREATE TABLE users"),
+            "Hidden block content removed"
+        );
+        assert!(
+            !result.contains("INSERT INTO users"),
+            "Hidden block content removed"
+        );
+
+        // Visible code block preserved (without markers)
+        assert!(
+            result.contains("SELECT * FROM users"),
+            "Visible query preserved"
+        );
+        assert!(!result.contains("ASSERT"), "Markers stripped");
+
+        // Blockquote preserved
+        assert!(result.contains("> **Note**"), "Blockquote preserved");
+
+        // Link preserved
+        assert!(
+            result.contains("[SQL documentation](https://sqlite.org)"),
+            "Link preserved"
+        );
+
+        // Headings preserved
+        assert!(result.contains("## Basic Queries"), "H2 preserved");
+        assert!(result.contains("### Summary"), "H3 preserved");
+    }
+
+    #[test]
+    fn strip_markers_preserves_headings_with_links() {
+        // Regression test: headings containing links were being corrupted
+        let content = r#"# Introduction
+
+Some intro text.
+
+### [Configuration Guide](https://example.com/config)
+
+This section explains configuration.
+
+### [API Reference](https://example.com/api)
+
+API docs here.
+
+```sql validator=sqlite
+SELECT 1;
+```
+
+### [Advanced Topics](https://example.com/advanced)
+
+More content."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+
+        // Headings with links must be preserved exactly
+        assert!(
+            result.contains("### [Configuration Guide](https://example.com/config)"),
+            "Heading with link must be preserved"
+        );
+        assert!(
+            result.contains("### [API Reference](https://example.com/api)"),
+            "Heading with link must be preserved"
+        );
+        assert!(
+            result.contains("### [Advanced Topics](https://example.com/advanced)"),
+            "Heading with link must be preserved"
+        );
+        // Code block still processed
+        assert!(result.contains("SELECT 1"), "Code block content preserved");
+    }
+
+    #[test]
+    fn strip_markers_preserves_paths_with_wildcards() {
+        // Regression test: paths with * were being parsed as emphasis
+        let content = r#"# File Patterns
+
+Match all files in a directory:
+
+- `/etc/osquery/*`
+- `/var/log/*.log`
+- `C:\Users\*\AppData`
+
+You can also use `/some/path/**/*.json` for recursive matching.
+
+```sql validator=sqlite
+SELECT 1;
+```
+
+The path `/tmp/*` is commonly used."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+
+        // Paths with wildcards must be preserved exactly
+        assert!(
+            result.contains("/etc/osquery/*"),
+            "Path with wildcard must be preserved"
+        );
+        assert!(
+            result.contains("/var/log/*.log"),
+            "Path with wildcard must be preserved"
+        );
+        assert!(
+            result.contains(r"C:\Users\*\AppData"),
+            "Windows path with wildcard must be preserved"
+        );
+        assert!(
+            result.contains("/some/path/**/*.json"),
+            "Recursive glob must be preserved"
+        );
+        assert!(
+            result.contains("/tmp/*"),
+            "Inline path with wildcard must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_inline_code_with_special_chars() {
+        // Regression test: inline code with special characters
+        let content = r#"# Code Examples
+
+Use `SELECT * FROM users` to get all users.
+
+The command `rm -rf /tmp/*` removes temp files.
+
+Run `echo $HOME` to print home directory.
+
+Use `git log --oneline | head -10` for recent commits.
+
+The regex `\d+\.\d+` matches decimals.
+
+```sql validator=sqlite
+SELECT 1;
+```
+
+Also try `jq '.[] | .name'` for JSON parsing."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+
+        // Inline code must be preserved exactly
+        assert!(
+            result.contains("`SELECT * FROM users`"),
+            "Inline code with * must be preserved"
+        );
+        assert!(
+            result.contains("`rm -rf /tmp/*`"),
+            "Inline code with path must be preserved"
+        );
+        assert!(
+            result.contains("`echo $HOME`"),
+            "Inline code with $ must be preserved"
+        );
+        assert!(
+            result.contains("`git log --oneline | head -10`"),
+            "Inline code with pipe must be preserved"
+        );
+        assert!(
+            result.contains(r"`\d+\.\d+`"),
+            "Inline code with backslashes must be preserved"
+        );
+        assert!(
+            result.contains("`jq '.[] | .name'`"),
+            "Inline code with quotes must be preserved"
+        );
+    }
+
+    #[test]
+    fn strip_markers_preserves_asterisks_in_text() {
+        // Regression test: asterisks in regular text (not emphasis)
+        let content = r#"# Wildcards
+
+The pattern `*` matches everything.
+
+File paths like /etc/* are common.
+
+Use * for wildcards and ** for recursive.
+
+Math: 5 * 3 = 15
+
+```sql validator=sqlite
+SELECT 1;
+```
+
+Done."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+
+        // Asterisks in various contexts
+        assert!(
+            result.contains("The pattern `*` matches everything"),
+            "Backtick asterisk preserved"
+        );
+        assert!(result.contains("/etc/*"), "Path asterisk preserved");
+        assert!(result.contains("5 * 3 = 15"), "Math asterisk preserved");
+    }
+
+    #[test]
+    fn strip_markers_preserves_complex_inline_formatting() {
+        // Test various inline formatting combinations
+        let content = r#"# Formatting Test
+
+This has **bold** and *italic* text.
+
+This has `code with **asterisks**` inside.
+
+This has [link with `code`](https://example.com).
+
+This has **bold with `code` inside**.
+
+```sql validator=sqlite
+SELECT 1;
+```
+
+End."#;
+        let result = ValidatorPreprocessor::strip_markers_from_chapter(content);
+
+        assert!(result.contains("**bold**"), "Bold preserved");
+        assert!(result.contains("*italic*"), "Italic preserved");
+        assert!(
+            result.contains("`code with **asterisks**`"),
+            "Code with asterisks preserved"
+        );
+        assert!(
+            result.contains("[link with `code`](https://example.com)"),
+            "Link with code preserved"
+        );
+        assert!(
+            result.contains("**bold with `code` inside**"),
+            "Bold with code preserved"
+        );
     }
 }
