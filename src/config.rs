@@ -6,6 +6,7 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 
 use anyhow::Result;
+use tracing::debug;
 
 use crate::error::ValidatorError;
 use serde::Deserialize;
@@ -51,12 +52,22 @@ impl Config {
     pub fn from_context(ctx: &mdbook_preprocessor::PreprocessorContext) -> Result<Self> {
         // Use the new mdbook 0.5 config API to get preprocessor config
         let config: Option<Config> = ctx.config.get("preprocessor.validator")?;
-        config.ok_or_else(|| {
-            ValidatorError::Config {
-                message: "No [preprocessor.validator] section in book.toml".into(),
-            }
-            .into()
-        })
+        let config = config.ok_or_else(|| ValidatorError::Config {
+            message: "No [preprocessor.validator] section in book.toml".into(),
+        })?;
+
+        debug!(
+            validators = config.validators.len(),
+            fail_fast = config.fail_fast,
+            fixtures_dir = ?config.fixtures_dir,
+            "Loaded config"
+        );
+
+        for name in config.validators.keys() {
+            debug!(validator = %name, "Registered validator");
+        }
+
+        Ok(config)
     }
 
     /// Get validator config by name.

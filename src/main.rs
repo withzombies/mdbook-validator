@@ -10,9 +10,32 @@ use std::process;
 use mdbook_preprocessor::{parse_input, Preprocessor};
 use mdbook_validator::dependency::{check_all, RealChecker};
 use mdbook_validator::ValidatorPreprocessor;
+use tracing_subscriber::EnvFilter;
+
+/// Initialize the logging subsystem.
+///
+/// Uses `MDBOOK_LOG` environment variable to control log levels (same as mdbook).
+/// Defaults to INFO level if not set. Invalid values are handled gracefully.
+///
+/// # Panics
+///
+/// Panics if called more than once (tracing subscriber already initialized).
+fn init_logger() {
+    let filter = EnvFilter::builder()
+        .with_env_var("MDBOOK_LOG")
+        .with_default_directive(tracing_subscriber::filter::LevelFilter::INFO.into())
+        .from_env_lossy();
+
+    tracing_subscriber::fmt()
+        .with_writer(std::io::stderr)
+        .with_env_filter(filter)
+        .with_target(true)
+        .without_time()
+        .init();
+}
 
 fn main() {
-    tracing_subscriber::fmt().with_writer(io::stderr).init();
+    init_logger();
 
     // Check for required external dependencies and warn if missing
     let status = check_all(&RealChecker);

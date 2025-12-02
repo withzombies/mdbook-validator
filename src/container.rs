@@ -4,6 +4,7 @@
 //! for exec with environment variables.
 
 use std::sync::Arc;
+use tracing::{debug, trace};
 
 use anyhow::{Context, Result};
 
@@ -118,6 +119,7 @@ impl ValidatorContainer {
     ///
     /// Returns error if Docker is not running or container fails to start.
     pub async fn start_with_image(image: &str, validator_script: &[u8]) -> Result<Self> {
+        debug!(image = %image, "Starting container");
         let (name, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
 
         let container = GenericImage::new(name, tag)
@@ -128,6 +130,9 @@ impl ValidatorContainer {
             .context("Failed to start container. Is Docker running?")?;
 
         let container_id = container.id().to_owned();
+        // Show first 12 chars of container ID (like docker ps)
+        let short_id: String = container_id.chars().take(12).collect();
+        debug!(container_id = %short_id, "Container ready");
 
         // Get Docker client and wrap it
         let docker_client = docker_client_instance()
@@ -172,6 +177,8 @@ impl ValidatorContainer {
         assertions: Option<&str>,
         expect: Option<&str>,
     ) -> Result<ValidationResult> {
+        debug!("Executing with env vars");
+        trace!(content = %content, setup = ?setup, assertions = ?assertions, expect = ?expect, "Exec environment");
         let mut env_vars = vec![format!("VALIDATOR_CONTENT={content}")];
         if let Some(s) = setup {
             env_vars.push(format!("VALIDATOR_SETUP={s}"));
@@ -233,6 +240,7 @@ impl ValidatorContainer {
     ///
     /// Returns error if exec creation or execution fails.
     pub async fn exec_raw(&self, cmd: &[&str]) -> Result<ValidationResult> {
+        debug!(command = ?cmd, "Executing raw command");
         let cmd_owned: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
 
         let exec = self
@@ -285,6 +293,8 @@ impl ValidatorContainer {
     ) -> Result<ValidationResult> {
         use tokio::io::AsyncWriteExt;
 
+        debug!(command = ?cmd, "Executing with stdin");
+        trace!(stdin = %stdin_content, "Stdin content");
         let cmd_owned: Vec<String> = cmd.iter().map(|s| (*s).to_owned()).collect();
 
         let exec = self
@@ -360,6 +370,7 @@ impl ValidatorContainer {
     ) -> Result<Self> {
         use testcontainers::core::Mount;
 
+        debug!(image = %image, mount = ?mount.map(|(p, c)| (p.display().to_string(), c)), "Starting raw container");
         let (name, tag) = image.rsplit_once(':').unwrap_or((image, "latest"));
 
         let base_image = GenericImage::new(name, tag).with_cmd(["sleep", "infinity"]);
@@ -379,6 +390,9 @@ impl ValidatorContainer {
         };
 
         let container_id = container.id().to_owned();
+        // Show first 12 chars of container ID (like docker ps)
+        let short_id: String = container_id.chars().take(12).collect();
+        debug!(container_id = %short_id, "Container ready");
 
         // Get Docker client and wrap it
         let docker_client = docker_client_instance()

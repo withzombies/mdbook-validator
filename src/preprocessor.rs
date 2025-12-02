@@ -2,6 +2,8 @@
 //!
 //! Bridges the synchronous mdBook Preprocessor trait to async container validation.
 
+use tracing::{debug, info, trace};
+
 // Default exec commands for validators when not configured
 const DEFAULT_EXEC_SQLITE: &str = "sqlite3 -json /tmp/test.db";
 const DEFAULT_EXEC_OSQUERY: &str = "osqueryi --json";
@@ -269,6 +271,8 @@ impl ValidatorPreprocessor {
             return Ok(());
         }
 
+        info!(chapter = %chapter.name, blocks = blocks.len(), "Validating");
+
         // Check for mutually exclusive attributes (fail fast)
         for block in &blocks {
             if block.skip && block.hidden {
@@ -277,10 +281,13 @@ impl ValidatorPreprocessor {
         }
 
         // Validate each block using configured validator
-        for block in &blocks {
+        for (idx, block) in blocks.iter().enumerate() {
             if block.skip {
+                debug!(block = idx + 1, validator = %block.validator_name, "Skipping (skip=true)");
                 continue;
             }
+
+            debug!(block = idx + 1, validator = %block.validator_name, "Validating block");
 
             // Get validator config
             let validator_config = config.get_validator(&block.validator_name).map_err(|e| {
@@ -309,6 +316,8 @@ impl ValidatorPreprocessor {
         // All validations passed - strip markers from chapter content
         chapter.content = Self::strip_markers_from_chapter(&chapter.content);
 
+        info!(chapter = %chapter.name, "✓ Passed");
+
         Ok(())
     }
 
@@ -332,14 +341,19 @@ impl ValidatorPreprocessor {
             )));
         }
 
+        debug!(script = %script_path.display(), "Using validator script");
+
         // Get exec command (use defaults if not configured)
         let exec_cmd = Self::get_exec_command(&block.validator_name, validator_config);
+        debug!(exec_command = %exec_cmd, "Container exec command");
 
         // 1. Run setup script in container (if any)
         // SETUP content IS the shell command - run directly via sh -c
         if let Some(setup) = &block.markers.setup {
             let setup_script = setup.trim();
             if !setup_script.is_empty() {
+                debug!("Running SETUP script");
+                trace!(setup = %setup_script, "SETUP content");
                 let setup_result = container
                     .exec_raw(&["sh", "-c", setup_script])
                     .await
@@ -371,11 +385,16 @@ impl ValidatorPreprocessor {
             )));
         }
 
+        debug!("Executing query in container");
+        trace!(query = %query_sql, "Query content");
+
         // Pass content via stdin (secure) instead of shell interpolation (vulnerable)
         let query_result = container
             .exec_with_stdin(&["sh", "-c", &exec_cmd], query_sql)
             .await
             .map_err(|e| Error::msg(format!("Query exec failed: {e}")))?;
+
+        trace!(exit_code = query_result.exit_code, stdout = %query_result.stdout, stderr = %query_result.stderr, "Query result");
 
         if query_result.exit_code != 0 {
             return Err(Error::msg(format!(
@@ -390,6 +409,7 @@ impl ValidatorPreprocessor {
             .to_str()
             .ok_or_else(|| Error::msg(format!("Invalid script path: {}", script_path.display())))?;
 
+        debug!("Running host validator");
         let validation_result = host_validator::run_validator(
             &RealCommandRunner,
             script_path_str,
@@ -404,6 +424,8 @@ impl ValidatorPreprocessor {
                 chapter_name, block.validator_name, e
             ))
         })?;
+
+        trace!(exit_code = validation_result.exit_code, stdout = %validation_result.stdout, stderr = %validation_result.stderr, "Validator result");
 
         if validation_result.exit_code != 0 {
             let mut error_msg = format!(
