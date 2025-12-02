@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.1] - 2025-12-02
+
+### Fixed
+
+- **Markdown corruption bug**: The `strip_markers_from_chapter` function was reconstructing markdown from pulldown-cmark events, but only handled a subset of events. Lists, blockquotes, links, emphasis, tables, and other elements were silently dropped, causing corrupted output.
+  - Rewrote to use span-based editing that surgically modifies only code block contents
+  - Added 15 regression tests covering lists, blockquotes, links, inline code, emphasis, tables, headings with links, paths with wildcards, and complex documents
+
+### Added
+
+- **`MDBOOK_LOG` environment variable**: Control log verbosity using the same variable as mdbook itself
+  - Supports standard log levels: `error`, `warn`, `info`, `debug`, `trace`
+  - Defaults to `info` level when not set
+  - Example: `MDBOOK_LOG=debug mdbook build`
+
 ## [1.1.0] - 2025-12-02
 
 ### Added
