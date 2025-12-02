@@ -16,6 +16,7 @@ This guide covers common errors and platform-specific issues when using mdbook-v
 | E008 | Invalid Config | Add required fields (container, script) |
 | E009 | Fixtures Error | Check fixtures_dir path exists and is a directory |
 | E010 | Script Not Found | Check validator script path is correct |
+| E011 | Mutually Exclusive | Remove either `hidden` or `skip` (can't use both) |
 
 ---
 
@@ -367,6 +368,43 @@ Fix: Correct the typo in the path (`validaters` → `validators`).
 
 ---
 
+### E011: Mutually Exclusive Attributes
+
+**Message**: `[E011] 'hidden' and 'skip' are mutually exclusive`
+
+**Common Causes**:
+- Code block has both `hidden` and `skip` attributes
+- Copy-paste error from another block
+- Confusion about what each attribute does
+
+**How to Fix**:
+1. Understand the difference:
+   - `skip` = Don't validate this block, but show it to readers
+   - `hidden` = Validate this block, but don't show it to readers
+
+2. Choose one based on your intent:
+   ```markdown
+   <!-- If you want to show an intentionally broken example (no validation): -->
+   ```sql validator=sqlite skip
+   SELECT * FROM nonexistent_table;
+   ```
+
+   <!-- If you want to validate but hide from readers: -->
+   ```sql validator=sqlite hidden
+   INSERT INTO users VALUES (1, 'alice');
+   ```
+   ```
+
+3. Remove the attribute you don't need.
+
+**Example**:
+```
+[E011] 'hidden' and 'skip' are mutually exclusive
+```
+Fix: Remove either `hidden` or `skip` from your code block attributes.
+
+---
+
 ## Platform-Specific Issues
 
 ### macOS
@@ -480,7 +518,7 @@ Large JSON outputs are loaded into memory. For queries returning >100MB of data:
 
 If you encounter an error not covered here:
 
-1. Check the error code (E001-E010) for category
+1. Check the error code (E001-E011) for category
 2. Run with `RUST_LOG=debug mdbook build` for verbose output
 3. Open an issue at https://github.com/withzombies/mdbook-validator/issues
 

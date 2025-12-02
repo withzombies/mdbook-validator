@@ -29,7 +29,8 @@ You only find out when a user complains.
 
 - **Container-based validation** - Run examples against real tools (osquery, SQLite, etc.)
 - **Hidden setup blocks** - Include setup code that's validated but not shown to readers
-- **Hidden context lines** - Show partial configs while validating complete ones
+- **Hidden context lines** - Show partial configs while validating complete ones (`@@` prefix)
+- **Hidden code blocks** - Validate entire blocks without showing them to readers (`hidden` attribute)
 - **Output assertions** - Verify row counts, check for specific content
 - **Expected output matching** - Regression testing for deterministic queries
 - **Clean output** - All validation markers stripped from rendered documentation
@@ -281,6 +282,42 @@ contains "login"
 SELECT * FROM nonexistent_table;
 ```
 ````
+
+### Hidden Blocks
+
+Use `hidden` to validate a code block without showing it to readers. The entire code fence is removed from output.
+
+````markdown
+```sql validator=sqlite hidden
+<!--SETUP
+sqlite3 /tmp/test.db 'CREATE TABLE users (id INTEGER, name TEXT);'
+-->
+INSERT INTO users VALUES (1, 'alice'), (2, 'bob');
+```
+
+```sql validator=sqlite
+SELECT name FROM users WHERE id = 1;
+<!--ASSERT
+rows = 1
+contains "alice"
+-->
+```
+````
+
+**Reader sees only:**
+```sql
+SELECT name FROM users WHERE id = 1;
+```
+
+The hidden block populates data that the visible query depends on. Both are validated, but only the second appears in documentation.
+
+**Use cases:**
+- Setup queries that create test data for subsequent examples
+- Teardown or cleanup blocks
+- Validation-only examples that shouldn't appear in docs
+- Multi-step workflows where only the final step matters to readers
+
+**Note:** `hidden` and `skip` are mutually exclusive. Using both produces error E011.
 
 ## Assertions
 

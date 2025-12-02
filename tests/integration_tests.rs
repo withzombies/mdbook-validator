@@ -914,3 +914,150 @@ SELECT 1;
         }
     }
 }
+
+/// Test: hidden and skip together returns E011 error
+///
+/// Verifies that `hidden` and `skip` are mutually exclusive.
+/// Using both should produce a clear E011 error.
+#[test]
+fn preprocessor_errors_on_hidden_and_skip_together() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
+    // Code block with both hidden AND skip - should fail with E011
+    let chapter_content = r#"# Mutual Exclusivity Test
+
+```sql validator=sqlite hidden skip
+SELECT 1;
+```
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(_) => {
+            panic!("Should have failed with E011 for hidden+skip combination");
+        }
+        Err(e) => {
+            let error_msg = format!("{e}");
+
+            // Verify E011 error message
+            assert!(
+                error_msg.contains("E011") || error_msg.contains("mutually exclusive"),
+                "Error should mention E011 or mutual exclusivity. Got: {error_msg}"
+            );
+            assert!(
+                error_msg.contains("hidden") && error_msg.contains("skip"),
+                "Error should mention both 'hidden' and 'skip'. Got: {error_msg}"
+            );
+
+            println!("E011 mutual exclusivity test passed! Error: {error_msg}");
+        }
+    }
+}
+
+/// Test: hidden attribute removes entire code block from output
+///
+/// Full end-to-end test verifying that:
+/// 1. Code block with `hidden` attribute is validated (query runs)
+/// 2. Entire code fence is removed from output (no fence delimiters, no content)
+/// 3. Non-hidden blocks in same document remain visible
+#[test]
+fn preprocessor_hidden_attribute_removes_entire_block() {
+    let book_root = std::env::current_dir().expect("should get current dir");
+    let config = create_sqlite_config();
+
+    // Document has: hidden block (should be removed) + visible block (should remain)
+    let chapter_content = r#"# Hidden Block Test
+
+Setup text before.
+
+```sql validator=sqlite hidden
+<!--SETUP
+sqlite3 /tmp/test.db 'CREATE TABLE IF NOT EXISTS hidden_test(id INTEGER); INSERT INTO hidden_test VALUES(42);'
+-->
+SELECT id FROM hidden_test;
+<!--ASSERT
+rows >= 1
+-->
+```
+
+Middle text.
+
+```sql validator=sqlite
+SELECT 'visible_query' as result;
+<!--ASSERT
+rows >= 1
+-->
+```
+
+End text.
+"#;
+
+    let book = create_book_with_content(chapter_content);
+    let preprocessor = ValidatorPreprocessor::new();
+
+    let result = preprocessor.process_book_with_config(book, &config, &book_root);
+
+    match result {
+        Ok(processed_book) => {
+            let Some(BookItem::Chapter(chapter)) = processed_book.items.first() else {
+                panic!("Expected chapter in processed book");
+            };
+
+            let output = &chapter.content;
+
+            // Hidden block should be COMPLETELY removed (no fence, no content)
+            assert!(
+                !output.contains("hidden_test"),
+                "Hidden block table name should not appear. Output:\n{output}"
+            );
+            assert!(
+                !output.contains("SELECT id FROM"),
+                "Hidden block query should not appear. Output:\n{output}"
+            );
+
+            // Verify no fence delimiters for hidden block remain
+            // Count sql blocks - should only be 1 (the visible one)
+            let sql_block_count = output.matches("```sql").count();
+            assert_eq!(
+                sql_block_count, 1,
+                "Should have exactly 1 sql block (visible only). Output:\n{output}"
+            );
+
+            // Visible block should remain
+            assert!(
+                output.contains("visible_query"),
+                "Visible block should remain. Output:\n{output}"
+            );
+
+            // Text content should remain
+            assert!(
+                output.contains("Setup text before"),
+                "Text before should remain. Output:\n{output}"
+            );
+            assert!(
+                output.contains("Middle text"),
+                "Middle text should remain. Output:\n{output}"
+            );
+            assert!(
+                output.contains("End text"),
+                "End text should remain. Output:\n{output}"
+            );
+
+            // Markers should be stripped from visible block
+            assert!(
+                !output.contains("<!--ASSERT"),
+                "ASSERT marker should be stripped. Output:\n{output}"
+            );
+
+            println!("Hidden attribute E2E test passed! Output:\n{output}");
+        }
+        Err(e) => {
+            panic!("Preprocessor failed - hidden block should still validate: {e}");
+        }
+    }
+}

@@ -195,6 +195,55 @@ fn e2e_output_has_no_markers() {
     println!("E2E marker stripping test passed!");
 }
 
+/// Test: Hidden blocks are validated but removed from output
+///
+/// Verifies that code blocks with the `hidden` attribute:
+/// 1. Are validated (build succeeds, so validation passed)
+/// 2. Are completely removed from the HTML output
+/// 3. Can set up state for subsequent visible blocks
+#[test]
+fn e2e_hidden_blocks_not_in_output() {
+    ensure_book_built();
+
+    let book_path = TEMP_BOOK_PATH.get().expect("Temp book path should be set");
+
+    // Read the generated HTML
+    let html_path = book_path.join("book/valid-examples.html");
+    let content = std::fs::read_to_string(&html_path).expect(&format!(
+        "Failed to read output HTML at {}",
+        html_path.display()
+    ));
+
+    // The hidden block contains "XYZ_HIDDEN_BLOCK_CONTENT_789" - this should NOT appear in output
+    // (This unique marker only appears inside the hidden code block, not in surrounding text)
+    assert!(
+        !content.contains("XYZ_HIDDEN_BLOCK_CONTENT_789"),
+        "Hidden block content should NOT appear in output.\n\
+         The marker 'XYZ_HIDDEN_BLOCK_CONTENT_789' was found but should have been removed.\n\
+         File: {}",
+        html_path.display()
+    );
+
+    // The visible block that follows the hidden block should still be present
+    // It queries the table created by the hidden block
+    assert!(
+        content.contains("SELECT COUNT(*) as count FROM hidden_test"),
+        "Visible block following hidden block should be in output.\n\
+         File: {}",
+        html_path.display()
+    );
+
+    // The section heading should still be there
+    assert!(
+        content.contains("Hidden Block (Validated but Not Shown)"),
+        "Section heading should still be in output.\n\
+         File: {}",
+        html_path.display()
+    );
+
+    println!("E2E hidden block test passed - hidden content removed, visible content preserved!");
+}
+
 /// Test: Invalid shellcheck script fails with SC2086 error
 ///
 /// Verifies that:

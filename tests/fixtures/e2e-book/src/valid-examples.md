@@ -28,6 +28,31 @@ contains "test"
 -->
 ```
 
+## Hidden Block (Validated but Not Shown)
+
+This section demonstrates the `hidden` attribute. The following block is validated
+but completely removed from output:
+
+```sql validator=sqlite hidden
+<!--SETUP
+sqlite3 /tmp/test.db "CREATE TABLE hidden_test (id INTEGER, marker TEXT); INSERT INTO hidden_test VALUES (1, 'XYZ_HIDDEN_BLOCK_CONTENT_789');"
+-->
+SELECT marker FROM hidden_test WHERE marker = 'XYZ_HIDDEN_BLOCK_CONTENT_789';
+<!--ASSERT
+rows = 1
+contains "XYZ_HIDDEN_BLOCK_CONTENT_789"
+-->
+```
+
+The query below uses the table created by the hidden block above:
+
+```sql validator=sqlite
+SELECT COUNT(*) as count FROM hidden_test;
+<!--ASSERT
+rows = 1
+-->
+```
+
 ## osquery Config (JSON)
 
 Valid osquery configuration file:
