@@ -60,10 +60,17 @@ impl CommandRunner for RealCommandRunner {
             .with_context(|| format!("Failed to spawn validator: {script_path}"))?;
 
         // Write content to stdin
+        // Note: EPIPE (broken pipe) can occur if the process exits before we finish writing.
+        // This is expected when the script doesn't exist or exits immediately.
+        // We ignore EPIPE and continue to get the exit code.
         if let Some(mut stdin) = child.stdin.take() {
-            stdin
-                .write_all(stdin_content.as_bytes())
-                .context("Failed to write to validator stdin")?;
+            if let Err(e) = stdin.write_all(stdin_content.as_bytes()) {
+                // Only fail for errors other than broken pipe
+                if e.kind() != std::io::ErrorKind::BrokenPipe {
+                    return Err(e).context("Failed to write to validator stdin");
+                }
+                // EPIPE is fine - process exited early, we'll get exit code below
+            }
         }
 
         child
