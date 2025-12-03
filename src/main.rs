@@ -1,3 +1,5 @@
+#![doc = include_str!("../README.md")]
+
 //! mdbook-validator CLI entry point
 //!
 //! Implements the mdBook preprocessor protocol:
