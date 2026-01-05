@@ -38,3 +38,11 @@ script = "validators/validate-bash-exec.sh"
 # exec_command runs script and outputs JSON: {"exit_code": N, "stdout": "...", "stderr": "..."}
 # Content is passed via stdin - use cat to read it
 exec_command = '''sh -c 'cat > /tmp/script.sh && chmod +x /tmp/script.sh && bash /tmp/script.sh > /tmp/stdout.txt 2> /tmp/stderr.txt; EXIT_CODE=$?; STDOUT=$(cat /tmp/stdout.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); STDERR=$(cat /tmp/stderr.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); printf "{\"exit_code\": %d, \"stdout\": \"%s\", \"stderr\": \"%s\"}" "$EXIT_CODE" "$STDOUT" "$STDERR"' '''
+
+[preprocessor.validator.validators.typescript]
+container = "node:18.20-slim"
+script = "validators/validate-typescript.sh"
+# Content is passed via stdin, compiled with tsc, run with node, outputs JSON
+# Works in /app for npm dependency support (SETUP: mkdir -p /app && cd /app && npm init -y && npm install ...)
+# For cleaner config, use fixtures_dir to mount validators/ and exec_command = "sh /fixtures/typescript-exec.sh"
+exec_command = '''sh -c 'mkdir -p /app && cd /app && cat > script.ts && npx -y -p typescript tsc --strict --lib es2020,dom script.ts > tsc_out.txt 2>/dev/null; TSC_EXIT=$?; if [ $TSC_EXIT -ne 0 ]; then STDERR=$(cat tsc_out.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); printf "{\"exit_code\": %d, \"stdout\": \"\", \"stderr\": \"%s\"}" "$TSC_EXIT" "$STDERR"; else node script.js > stdout.txt 2> stderr.txt; EXIT_CODE=$?; STDOUT=$(cat stdout.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); STDERR=$(cat stderr.txt | tr -d "\n" | sed "s/\\\\/\\\\\\\\/g" | sed "s/\"/\\\\\"/g"); printf "{\"exit_code\": %d, \"stdout\": \"%s\", \"stderr\": \"%s\"}" "$EXIT_CODE" "$STDOUT" "$STDERR"; fi' '''
