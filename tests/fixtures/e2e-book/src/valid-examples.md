@@ -88,3 +88,33 @@ def hello(name):
 if __name__ == "__main__":
     print(hello("world"))
 ```
+
+## TypeScript Examples
+
+Valid TypeScript that compiles and runs:
+
+```typescript validator=typescript
+console.log("Hello TypeScript");
+<!--ASSERT
+exit_code = 0
+stdout_contains "Hello"
+-->
+```
+
+TypeScript with type error (hidden - validates error detection):
+
+```typescript validator=typescript hidden
+const x: number = "not a number";
+<!--ASSERT
+exit_code = 2
+-->
+```
+
+TypeScript with runtime error (hidden - validates runtime error detection):
+
+```typescript validator=typescript hidden
+throw new Error("runtime failure");
+<!--ASSERT
+exit_code = 1
+-->
+```
