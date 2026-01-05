@@ -512,6 +512,15 @@ impl ValidatorPreprocessor {
                         )));
                     }
 
+                    // Canonicalize to resolve symlinks (Docker requires real paths)
+                    let fixtures_path = fixtures_path.canonicalize().map_err(|e| {
+                        Error::msg(format!(
+                            "fixtures_dir '{}' could not be canonicalized: {}",
+                            fixtures_path.display(),
+                            e
+                        ))
+                    })?;
+
                     Some((fixtures_path, "/fixtures"))
                 } else {
                     None
